@@ -1,10 +1,11 @@
 // Design Ref: DESIGN.md §4 단계 3 — 비교 전에 "표기만 다르고 뜻이 같은" 차이를 없앤다.
-// PRD 규칙: 공백, 쉼표, 한자/한글 표기(金/금) 차이만 같은 값으로 본다. 그 밖의 차이는 그대로 남긴다.
-// 놓치는 것(틀린 값을 일치로 판정)이 가장 위험하므로, 같다고 볼 범위를 넓히지 않는다.
+// PRD 규칙: 공백, 쉼표, 한자/한글 표기(金/금) 차이는 같은 값으로 본다.
+// 사용자 결정(2026-11-04): 한자는 검사하지 않는다. 대응표에 없는 한자는 지우고 비교한다.
+// 그 밖의 차이는 그대로 남긴다. 놓치는 것(틀린 값을 일치로 판정)이 가장 위험하기 때문이다.
 
 /**
  * 한자 → 한글 대응표.
- * 등기 서류에 실제로 나오는 표기만 둔다. 실제 서류를 확인하면서 필요할 때만 추가한다.
+ * 지우기 전에 먼저 한글로 바꿔서 "金 = 금" 규칙을 지킨다. (예: "金철수"와 "금철수"는 같다)
  */
 const HANJA_TO_HANGUL: Record<string, string> = {
   金: "금", // 금 120,000,000원
@@ -14,19 +15,27 @@ const HANJA_TO_HANGUL: Record<string, string> = {
 
 const HANJA_PATTERN = new RegExp(`[${Object.keys(HANJA_TO_HANGUL).join("")}]`, "gu");
 
+/** 모든 한자 (한중일 통합 한자 전체) */
+const ANY_HANJA_PATTERN = /\p{Script=Han}/gu;
+
 /**
  * 모든 비교 종류에 공통으로 적용하는 정규화.
- * 1) NFKC: 전각 숫자·쉼표(１，)와 ㎡ 같은 호환 문자를 일반 문자로 바꾼다.
+ * 1) NFKC: 전각 숫자·쉼표·괄호(１，（)와 ㎡ 같은 호환 문자를 일반 문자로 바꾼다.
  * 2) 공백(띄어쓰기, 줄바꿈, 전각 공백 포함)을 모두 없앤다.
  * 3) 쉼표를 없앤다.
  * 4) 대응표에 있는 한자를 한글로 바꾼다.
+ * 5) 남은 한자를 모두 지운다. 한자를 지우고 남은 빈 괄호 "()"도 지운다.
+ *    예: "홍길동(洪吉童)" → "홍길동"
+ *    한자로만 적힌 값은 빈 값이 되어, 비교 단계에서 「확인 필요」로 간다.
  */
 export function normalizeText(raw: string): string {
   return raw
     .normalize("NFKC")
     .replace(/\s+/gu, "")
     .replace(/,/gu, "")
-    .replace(HANJA_PATTERN, (ch) => HANJA_TO_HANGUL[ch] ?? ch);
+    .replace(HANJA_PATTERN, (ch) => HANJA_TO_HANGUL[ch] ?? ch)
+    .replace(ANY_HANJA_PATTERN, "")
+    .replace(/\(\)/gu, "");
 }
 
 /**

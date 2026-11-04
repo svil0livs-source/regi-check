@@ -12,6 +12,18 @@ describe("compareField: 이름·주소", () => {
     ).toBe("mismatch");
   });
 
+  it("한자 병기만 다르면 일치 (한자는 검사하지 않음)", () => {
+    expect(compareField("owner", v("홍길동(洪吉童)"), v("홍길동")).status).toBe("match");
+  });
+
+  it("한자를 빼고 남은 한글이 다르면 불일치", () => {
+    expect(compareField("owner", v("홍길동(洪吉童)"), v("홍길돈")).status).toBe("mismatch");
+  });
+
+  it("한자로만 적힌 이름은 비교할 수 없어 확인 필요", () => {
+    expect(compareField("owner", v("洪吉童"), v("홍길동")).status).toBe("needs_review");
+  });
+
   it("띄어쓰기만 다르면 일치", () => {
     expect(
       compareField("location", v("서울특별시 강남구 역삼동"), v("서울특별시강남구 역삼동")).status,

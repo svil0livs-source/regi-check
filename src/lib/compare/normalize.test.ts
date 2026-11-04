@@ -20,6 +20,24 @@ describe("normalizeText", () => {
     expect(normalizeText("金120,000,000원")).toBe(normalizeText("금 120,000,000원"));
   });
 
+  it("대응표에 없는 한자는 지운다 (한자는 검사하지 않음)", () => {
+    expect(normalizeText("홍길동(洪吉童)")).toBe("홍길동");
+    expect(normalizeText("홍길동（洪吉童）")).toBe("홍길동"); // 전각 괄호
+    expect(normalizeText("서울特別市 강남구")).toBe("서울강남구");
+  });
+
+  it("金은 지우지 않고 금으로 바꾼다 (金철수 = 금철수)", () => {
+    expect(normalizeText("金철수")).toBe("금철수");
+  });
+
+  it("한자로만 적힌 값은 빈 값이 된다", () => {
+    expect(normalizeText("洪吉童")).toBe("");
+  });
+
+  it("한자가 아닌 괄호 내용은 그대로 남긴다", () => {
+    expect(normalizeText("역삼동(123-4)")).toBe("역삼동(123-4)");
+  });
+
   it("전각 숫자를 일반 숫자로 바꾼다", () => {
     expect(normalizeText("１２３")).toBe("123");
   });
