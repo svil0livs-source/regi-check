@@ -245,5 +245,10 @@ export function compareDocuments(hwp: DocumentFields, registry: DocumentFields):
     compareField("receiptNumber", hwp.receiptNumber, registry.receiptNumber),
     compareField("transferReceiptNumber", hwp.transferReceiptNumber, registry.transferReceiptNumber),
     compareField("registrationDate", hwp.registrationDate, registry.registrationDate),
+    compareField(
+      "transferRegistrationDate",
+      hwp.transferRegistrationDate,
+      registry.transferRegistrationDate,
+    ),
   ];
 }

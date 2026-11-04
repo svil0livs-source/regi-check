@@ -150,7 +150,46 @@ describe("compareDocuments + summarizeCase: 건 전체", () => {
     maxClaimAmount: v("금 120,000,000원"),
     receiptNumber: v("제12345호"),
     transferReceiptNumber: v("제67890호"),
-    registrationDate: v("2026년 11월 4일"),
+    registrationDate: v("2020년 3월 2일"),
+    transferRegistrationDate: v("2026년 11월 4일"),
+  });
+
+  it("원 등기날짜와 이전 등기날짜를 둘 다 대조한다", () => {
+    const results = compareDocuments(base(), base());
+    expect(results.map((r) => r.key)).toEqual(
+      expect.arrayContaining(["registrationDate", "transferRegistrationDate"]),
+    );
+    expect(results.length).toBeGreaterThanOrEqual(13);
+  });
+
+  it("이전 등기날짜만 하루 틀려도 불일치 있음", () => {
+    const hwp = base();
+    hwp.transferRegistrationDate = v("2026년 11월 5일");
+    const results = compareDocuments(hwp, base());
+    expect(results.find((r) => r.key === "transferRegistrationDate")?.status).toBe("mismatch");
+    expect(results.find((r) => r.key === "registrationDate")?.status).toBe("match");
+    expect(summarizeCase(results)).toBe("mismatch_found");
+  });
+
+  it("원 등기날짜만 틀려도 불일치 있음", () => {
+    const hwp = base();
+    hwp.registrationDate = v("2021년 3월 2일");
+    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
+  });
+
+  it("두 등기날짜를 서로 바꿔 적으면 둘 다 불일치", () => {
+    const hwp = base();
+    hwp.registrationDate = v("2026년 11월 4일");
+    hwp.transferRegistrationDate = v("2020년 3월 2일");
+    const results = compareDocuments(hwp, base());
+    expect(results.find((r) => r.key === "registrationDate")?.status).toBe("mismatch");
+    expect(results.find((r) => r.key === "transferRegistrationDate")?.status).toBe("mismatch");
+  });
+
+  it("이전 등기날짜를 읽지 못하면 확인 필요", () => {
+    const registry = base();
+    registry.transferRegistrationDate = v(null);
+    expect(summarizeCase(compareDocuments(base(), registry))).toBe("needs_review");
   });
 
   it("원 접수번호와 이전 접수번호를 둘 다 대조한다", () => {

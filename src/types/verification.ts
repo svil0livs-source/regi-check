@@ -25,7 +25,8 @@ export type FieldKey =
   | "maxClaimAmount"
   | "receiptNumber" // 원 접수번호: 원래 근저당권(주등기)의 접수번호
   | "transferReceiptNumber" // 이전 접수번호: 근저당권이전(부기등기)의 접수번호
-  | "registrationDate";
+  | "registrationDate" // 원 등기날짜: 원래 근저당권(주등기)의 날짜
+  | "transferRegistrationDate"; // 이전 등기날짜: 근저당권이전(부기등기)의 날짜
 
 /** 값을 어떤 규칙으로 비교할지 정하는 종류 */
 export type CompareKind =
@@ -53,9 +54,10 @@ export const FIELD_DEFINITIONS: Record<
   receiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
   transferReceiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
   registrationDate: { group: "registrationDate", kind: "date" },
+  transferRegistrationDate: { group: "registrationDate", kind: "date" },
 };
 
-/** 모든 세부 항목 (한 건마다 이 12개를 빠짐없이 대조한다) */
+/** 모든 세부 항목 (한 건마다 이 13개를 빠짐없이 대조한다) */
 export const ALL_FIELD_KEYS = Object.keys(FIELD_DEFINITIONS) as FieldKey[];
 
 /**
@@ -114,7 +116,8 @@ export interface DocumentFields {
   maxClaimAmount: ExtractedValue;
   receiptNumber: ExtractedValue; // 원 접수번호 (주등기)
   transferReceiptNumber: ExtractedValue; // 이전 접수번호 (부기등기)
-  registrationDate: ExtractedValue;
+  registrationDate: ExtractedValue; // 원 등기날짜 (주등기)
+  transferRegistrationDate: ExtractedValue; // 이전 등기날짜 (부기등기)
 }
 
 /**
@@ -168,5 +171,6 @@ export const FIELD_KEY_LABELS: Record<FieldKey, string> = {
   maxClaimAmount: "채권최고액",
   receiptNumber: "원 접수번호",
   transferReceiptNumber: "이전 접수번호",
-  registrationDate: "등기날짜",
+  registrationDate: "원 등기날짜",
+  transferRegistrationDate: "이전 등기날짜",
 };
