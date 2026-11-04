@@ -23,7 +23,8 @@ export type FieldKey =
   | "area" // 면적
   // 단일 항목
   | "maxClaimAmount"
-  | "receiptNumber"
+  | "receiptNumber" // 원 접수번호: 원래 근저당권(주등기)의 접수번호
+  | "transferReceiptNumber" // 이전 접수번호: 근저당권이전(부기등기)의 접수번호
   | "registrationDate";
 
 /** 값을 어떤 규칙으로 비교할지 정하는 종류 */
@@ -50,10 +51,11 @@ export const FIELD_DEFINITIONS: Record<
   area: { group: "property", kind: "text" },
   maxClaimAmount: { group: "maxClaimAmount", kind: "amount" },
   receiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
+  transferReceiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
   registrationDate: { group: "registrationDate", kind: "date" },
 };
 
-/** 모든 세부 항목 (한 건마다 이 11개를 빠짐없이 대조한다) */
+/** 모든 세부 항목 (한 건마다 이 12개를 빠짐없이 대조한다) */
 export const ALL_FIELD_KEYS = Object.keys(FIELD_DEFINITIONS) as FieldKey[];
 
 /**
@@ -110,7 +112,8 @@ export interface DocumentFields {
   parties: Record<PartyRole, ExtractedValue[]>; // 역할마다 여러 명
   properties: PropertyEntry[]; // 부동산 여러 개
   maxClaimAmount: ExtractedValue;
-  receiptNumber: ExtractedValue;
+  receiptNumber: ExtractedValue; // 원 접수번호 (주등기)
+  transferReceiptNumber: ExtractedValue; // 이전 접수번호 (부기등기)
   registrationDate: ExtractedValue;
 }
 
@@ -163,6 +166,7 @@ export const FIELD_KEY_LABELS: Record<FieldKey, string> = {
   unitNumber: "건물 호수",
   area: "면적",
   maxClaimAmount: "채권최고액",
-  receiptNumber: "접수번호",
+  receiptNumber: "원 접수번호",
+  transferReceiptNumber: "이전 접수번호",
   registrationDate: "등기날짜",
 };

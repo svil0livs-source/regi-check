@@ -149,7 +149,46 @@ describe("compareDocuments + summarizeCase: 건 전체", () => {
     properties: [prop("서울특별시 강남구 역삼동", "123-4", "101동 1001호", "84.97㎡")],
     maxClaimAmount: v("금 120,000,000원"),
     receiptNumber: v("제12345호"),
+    transferReceiptNumber: v("제67890호"),
     registrationDate: v("2026년 11월 4일"),
+  });
+
+  it("원 접수번호와 이전 접수번호를 둘 다 대조한다", () => {
+    const results = compareDocuments(base(), base());
+    expect(results.map((r) => r.key)).toEqual(
+      expect.arrayContaining(["receiptNumber", "transferReceiptNumber"]),
+    );
+    expect(summarizeCase(results)).toBe("all_match");
+  });
+
+  it("원 접수번호는 맞고 이전 접수번호만 틀려도 불일치 있음", () => {
+    const hwp = base();
+    hwp.transferReceiptNumber = v("제67891호");
+    const results = compareDocuments(hwp, base());
+    expect(results.find((r) => r.key === "transferReceiptNumber")?.status).toBe("mismatch");
+    expect(results.find((r) => r.key === "receiptNumber")?.status).toBe("match");
+    expect(summarizeCase(results)).toBe("mismatch_found");
+  });
+
+  it("이전 접수번호만 맞고 원 접수번호가 틀려도 불일치 있음", () => {
+    const hwp = base();
+    hwp.receiptNumber = v("제12346호");
+    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
+  });
+
+  it("두 접수번호를 서로 바꿔 적으면 둘 다 불일치", () => {
+    const hwp = base();
+    hwp.receiptNumber = v("제67890호");
+    hwp.transferReceiptNumber = v("제12345호");
+    const results = compareDocuments(hwp, base());
+    expect(results.find((r) => r.key === "receiptNumber")?.status).toBe("mismatch");
+    expect(results.find((r) => r.key === "transferReceiptNumber")?.status).toBe("mismatch");
+  });
+
+  it("이전 접수번호를 읽지 못하면 전부 일치가 아니라 확인 필요", () => {
+    const registry = base();
+    registry.transferReceiptNumber = v(null);
+    expect(summarizeCase(compareDocuments(base(), registry))).toBe("needs_review");
   });
 
   it("공동 소유자 순서만 다르면 전부 일치", () => {

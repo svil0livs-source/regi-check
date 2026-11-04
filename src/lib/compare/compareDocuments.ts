@@ -243,6 +243,7 @@ export function compareDocuments(hwp: DocumentFields, registry: DocumentFields):
     ...compareProperties(hwp.properties, registry.properties),
     compareField("maxClaimAmount", hwp.maxClaimAmount, registry.maxClaimAmount),
     compareField("receiptNumber", hwp.receiptNumber, registry.receiptNumber),
+    compareField("transferReceiptNumber", hwp.transferReceiptNumber, registry.transferReceiptNumber),
     compareField("registrationDate", hwp.registrationDate, registry.registrationDate),
   ];
 }
