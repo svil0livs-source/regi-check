@@ -13,8 +13,9 @@ $cases = Get-Content (Join-Path $root "tests\fixtures-build\cases.json") -Encodi
 # A4, 200dpi
 $W = 1654; $H = 2339
 $fontName = "굴림"
-$fBody = New-Object System.Drawing.Font($fontName, 19, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-$fBold = New-Object System.Drawing.Font($fontName, 20, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+# 본문 약 10pt (실제 등기부와 비슷한 크기, 200dpi 기준 28px)
+$fBody = New-Object System.Drawing.Font($fontName, 28, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+$fBold = New-Object System.Drawing.Font($fontName, 28, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
 $fTitle = New-Object System.Drawing.Font($fontName, 34, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
 $fMark = New-Object System.Drawing.Font($fontName, 90, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
 $ink = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(35, 35, 35))
@@ -37,7 +38,7 @@ function Wrap($g, [string]$text, $font, [float]$width) {
 
 # 표 하나를 그리고 다음 y를 돌려준다
 function DrawTable($g, [float]$x, [float]$y, [float[]]$widths, $header, $rows) {
-  $lineH = 27
+  $lineH = 38
   $all = @(,$header) + $rows
   for ($r = 0; $r -lt $all.Count; $r++) {
     $cells = $all[$r]
@@ -65,7 +66,7 @@ function DrawTable($g, [float]$x, [float]$y, [float[]]$widths, $header, $rows) {
 
 function SectionTitle($g, [string]$text, [float]$y) {
   $g.DrawString($text, $fBold, $ink, 90, $y)
-  return $y + 38
+  return $y + 48
 }
 
 # 이미지 한 장을 담은 최소 PDF를 쓴다 (JPEG 그대로 넣기)

@@ -21,7 +21,10 @@
 npm run dev     # 개발 서버 (http://localhost:3000)
 npm run build   # 프로덕션 빌드
 npm run lint    # ESLint
-npm run test    # 대조 규칙 자동 시험 (Vitest 4.x)
+npm run test    # 대조 규칙 자동 시험 (Vitest 4.x). 글자 읽기 실제 시험은 건너뜀
+# 글자 읽기(OpenAI)까지 시험용 가짜 서류 20건으로 끝까지 시험 (비용 발생, 몇 분 걸림)
+# RUN_OCR=1 npx vitest run src/lib/verify/ocr.live.test.ts
+# 시험용 가짜 서류 다시 만들기: node scripts/fixtures/cases.mjs 후 scripts/fixtures/*.ps1 실행
 ```
 
 ## 중요: Next.js 버전 주의
