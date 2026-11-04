@@ -38,7 +38,7 @@ describe("compareField: 채권최고액", () => {
     ).toBe("mismatch");
   });
 
-  it("金/금, 쉼표, 원정 표기 차이는 일치", () => {
+  it("한자(金), 금, 쉼표, 원정 표기 차이는 일치", () => {
     expect(
       compareField("maxClaimAmount", v("金120,000,000원정"), v("금 120000000원")).status,
     ).toBe("match");

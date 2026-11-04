@@ -16,18 +16,14 @@ describe("normalizeText", () => {
     expect(normalizeText("1,234，567")).toBe("1234567");
   });
 
-  it("金을 금으로 바꾼다", () => {
-    expect(normalizeText("金120,000,000원")).toBe(normalizeText("금 120,000,000원"));
+  it("金 같은 한자도 지운다", () => {
+    expect(normalizeText("金120,000,000원")).toBe("120000000원");
   });
 
   it("대응표에 없는 한자는 지운다 (한자는 검사하지 않음)", () => {
     expect(normalizeText("홍길동(洪吉童)")).toBe("홍길동");
     expect(normalizeText("홍길동（洪吉童）")).toBe("홍길동"); // 전각 괄호
     expect(normalizeText("서울特別市 강남구")).toBe("서울강남구");
-  });
-
-  it("金은 지우지 않고 금으로 바꾼다 (金철수 = 금철수)", () => {
-    expect(normalizeText("金철수")).toBe("금철수");
   });
 
   it("한자로만 적힌 값은 빈 값이 된다", () => {
@@ -52,8 +48,9 @@ describe("normalizeText", () => {
 });
 
 describe("normalizeAmount", () => {
-  it("금·원·원정·쉼표·공백을 떼고 숫자만 남긴다", () => {
+  it("금·원·원정·쉼표·공백·한자를 떼고 숫자만 남긴다", () => {
     expect(normalizeAmount("金 120,000,000원정")).toBe("120000000");
+    expect(normalizeAmount("金120,000,000圓")).toBe("120000000");
     expect(normalizeAmount("금120000000원")).toBe("120000000");
     expect(normalizeAmount("120,000,000")).toBe("120000000");
   });
