@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 시험용 서류 (개인정보 포함 가능, 커밋하지 않음)
+/tests/fixtures/

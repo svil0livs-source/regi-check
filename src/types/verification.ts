@@ -79,12 +79,17 @@ export interface FieldResult {
   reason?: string; // 확인 필요·읽지 못함의 이유 (화면 안내용)
 }
 
-/** 건 하나의 한 줄 요약 */
+/**
+ * 건 하나의 한 줄 요약.
+ * - 대조 결과 3종: all_match, mismatch_found, needs_review (summarizeCase가 정한다)
+ * - 대조 전 상태 2종: file_problem(업로드 검사에서), processing_failed(서버 처리 오류)
+ */
 export type CaseSummary =
   | "all_match"
   | "mismatch_found"
   | "needs_review"
-  | "file_problem";
+  | "file_problem"
+  | "processing_failed";
 
 /** 화면 문구: 항목 상태 */
 export const FIELD_STATUS_LABELS: Record<FieldStatus, string> = {
@@ -100,6 +105,7 @@ export const CASE_SUMMARY_LABELS: Record<CaseSummary, string> = {
   mismatch_found: "불일치 있음",
   needs_review: "확인 필요",
   file_problem: "파일 부족/초과",
+  processing_failed: "처리 실패",
 };
 
 /** 화면 문구: 항목 그룹 */
