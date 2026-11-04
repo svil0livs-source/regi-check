@@ -31,6 +31,24 @@ describe("compareField: 이름·주소", () => {
   });
 });
 
+describe("compareField: 빈칸", () => {
+  it("지번·호수·면적이 양쪽 다 원래 빈칸이면 일치", () => {
+    expect(compareField("unitNumber", v(""), v("  ")).status).toBe("match");
+  });
+
+  it("호수가 한쪽만 빈칸이면 불일치", () => {
+    expect(compareField("unitNumber", v(""), v("101호")).status).toBe("mismatch");
+  });
+
+  it("이름이 빈칸이면 확인 필요", () => {
+    expect(compareField("owner", v(""), v("")).status).toBe("needs_review");
+  });
+
+  it("호수가 한자로만 적혀 비면 확인 필요", () => {
+    expect(compareField("unitNumber", v("壹號"), v("")).status).toBe("needs_review");
+  });
+});
+
 describe("compareField: 채권최고액", () => {
   it("숫자 한 자리라도 다르면 불일치", () => {
     expect(

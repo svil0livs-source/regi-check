@@ -73,10 +73,45 @@ export type FieldStatus = "match" | "mismatch" | "needs_review" | "unreadable";
 export interface FieldResult {
   key: FieldKey;
   group: FieldGroup;
-  hwpValue: string | null; // 한글 서류 값
-  registryValue: string | null; // 등기부등본 값 (정답)
+  hwpValue: string | null; // 한글 서류 값 (null: 읽지 못함 또는 한글 서류에 없음 — reason 참고)
+  registryValue: string | null; // 등기부등본 값 (정답, null의 뜻은 위와 같음)
   status: FieldStatus;
-  reason?: string; // 확인 필요·읽지 못함의 이유 (화면 안내용)
+  reason?: string; // 확인 필요·읽지 못함·없음의 이유 (화면 안내용)
+  index?: number; // 여러 명·여러 개일 때 몇 번째인지 (1부터). 화면에 "소유자 2"처럼 표시
+}
+
+// ── 여러 명·여러 개 (DESIGN.md §4.5, §4.7) ──────────────────────────
+
+/** 당사자 역할 4개 (세부 항목 키와 같은 이름) */
+export type PartyRole = "mortgagee" | "assignee" | "debtor" | "owner";
+
+export const PARTY_ROLES: PartyRole[] = ["mortgagee", "assignee", "debtor", "owner"];
+
+/** 부동산 1개 = 4개 칸 묶음 */
+export interface PropertyEntry {
+  location: ExtractedValue; // 소재지
+  lotNumber: ExtractedValue; // 지번
+  unitNumber: ExtractedValue; // 건물 호수
+  area: ExtractedValue; // 면적
+}
+
+/** 부동산 칸 4개 (세부 항목 키와 같은 이름) */
+export type PropertyFieldKey = keyof PropertyEntry;
+
+export const PROPERTY_FIELD_KEYS: PropertyFieldKey[] = [
+  "location",
+  "lotNumber",
+  "unitNumber",
+  "area",
+];
+
+/** 문서 하나에서 읽은 전체 값 (한글 서류용 1개, 등기부등본용 1개) */
+export interface DocumentFields {
+  parties: Record<PartyRole, ExtractedValue[]>; // 역할마다 여러 명
+  properties: PropertyEntry[]; // 부동산 여러 개
+  maxClaimAmount: ExtractedValue;
+  receiptNumber: ExtractedValue;
+  registrationDate: ExtractedValue;
 }
 
 /**
