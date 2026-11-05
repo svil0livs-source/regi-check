@@ -30,9 +30,9 @@ export default function Navbar({ links, onLink, action }: Props) {
     >
       <nav aria-label="주 메뉴" className="liquid-glass mx-auto flex max-w-5xl items-center justify-between rounded-full px-5 py-3 sm:px-6">
         <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center gap-2 rounded-full" aria-label="근이전 서류 검증기 처음 화면">
+          <Link href="/" className="flex items-center gap-2 rounded-full" aria-label="서류 검증기 처음 화면">
             <FileCheck2 size={24} className="text-white" aria-hidden />
-            <span className="text-lg font-semibold text-white">근이전 검증기</span>
+            <span className="text-lg font-semibold text-white">서류 검증기</span>
           </Link>
           <ul className="hidden items-center gap-8 md:flex">
             {links.map((l) => (
