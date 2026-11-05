@@ -12,6 +12,9 @@
   "dependencies": {
     "@tesseract.js-data/kor": "^1.0.0",
     "cfb": "^1.2.2",
+    "hls.js": "^1.7.4",
+    "lucide-react": "^1.68.0",
+    "motion": "^14.9.1",
     "next": "16.4.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
