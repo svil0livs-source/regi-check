@@ -7,10 +7,21 @@ import "server-only";
 import { voteRegistryReads } from "./ocrVote";
 import { extractJpegPages, readRegistryPdf, RegistryReadError, type RegistryRead } from "./registryOcr";
 import { DEFAULT_CONF_MIN, parseRegistryLines } from "./registryParse";
-import { recognizePage } from "./tesseractOcr";
+import { recognizePage, type RecognizeOptions } from "./tesseractOcr";
 
-/** 배율 5개: 배율마다 실수가 달라 다수결이 안정적이다 (200dpi 스캔 기준, 가짜 서류 시험) */
-const SCALES = [1.5, 1.75, 2, 2.25, 2.5];
+/**
+ * 읽기 설정 5개 (200dpi 스캔 기준, 가짜 서류 시험으로 고름).
+ * - 페이지 해석 6(한 덩어리 글)이 기본 자동 배치(3)보다 훨씬 정확했다 (틀린 항목 37개 → 11개).
+ * - 배율 1.5~2.25배가 좋고 2.5배 이상은 나빴다. 완전 흑백(이진화)은 밝기 기준 210에서만 쓸 만했다.
+ * - 설정마다 실수가 달라서 값마다 다수결로 정한다.
+ */
+const READS: RecognizeOptions[] = [
+  { scale: 1.5, psm: "6" },
+  { scale: 1.75, psm: "6" },
+  { scale: 2, psm: "6" },
+  { scale: 2.25, psm: "6" },
+  { scale: 2, psm: "6", prep: "bin", threshold: 210 },
+];
 
 export async function readRegistry(pdf: Buffer | Uint8Array, signal?: AbortSignal): Promise<RegistryRead> {
   if ((process.env.OCR_ENGINE ?? "tesseract") === "openai") return readRegistryPdf(pdf, signal);
@@ -21,10 +32,10 @@ export async function readRegistry(pdf: Buffer | Uint8Array, signal?: AbortSigna
   }
   const confMin = Number(process.env.OCR_CONF_MIN) || DEFAULT_CONF_MIN;
   const reads: RegistryRead[] = [];
-  for (const scale of SCALES) {
+  for (const opts of READS) {
     if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
     const lines = [];
-    for (const page of pages) lines.push(...(await recognizePage(page, scale)));
+    for (const page of pages) lines.push(...(await recognizePage(page, opts)));
     reads.push(parseRegistryLines(lines, confMin));
   }
   return voteRegistryReads(reads);

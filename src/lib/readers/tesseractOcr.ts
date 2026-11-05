@@ -41,11 +41,34 @@ function getWorker(): Promise<Worker> {
  * 스캔 페이지 사진을 배율만큼 키워(흑백) 읽는다.
  * 글자가 작으면 잘못 읽기 쉬워서, 200dpi 스캔 기준 약 2배가 가장 정확했다.
  */
-export async function recognizePage(image: Buffer, scale: number): Promise<OcrLine[]> {
+/**
+ * 사진 손질 방식
+ * - grey: 흑백 + 확대
+ * - norm: 흑백 + 대비 늘리기 + 선명하게
+ * - bin: 흑백 + 확대 후 완전 흑백(이진화, 밝기 기준 threshold)
+ */
+export type Prep = "grey" | "norm" | "bin";
+/** Tesseract 페이지 해석: "3" 자동 배치, "4" 한 열의 글, "6" 한 덩어리 글 */
+export type Psm = "3" | "4" | "6";
+
+export interface RecognizeOptions {
+  scale: number;
+  prep?: Prep;
+  psm?: Psm;
+  /** prep=bin일 때 밝기 기준 (0~255) */
+  threshold?: number;
+}
+
+export async function recognizePage(image: Buffer, opts: RecognizeOptions | number): Promise<OcrLine[]> {
+  const { scale, prep = "grey", psm = "3", threshold = 170 } = typeof opts === "number" ? { scale: opts } : opts;
   const meta = await sharp(image).metadata();
   const width = Math.round((meta.width ?? 1654) * scale);
-  const prepared = await sharp(image).greyscale().resize({ width, kernel: "lanczos3" }).png().toBuffer();
+  let pipeline = sharp(image).greyscale().resize({ width, kernel: "lanczos3" });
+  if (prep === "norm") pipeline = pipeline.normalise().sharpen();
+  if (prep === "bin") pipeline = pipeline.threshold(threshold);
+  const prepared = await pipeline.png().toBuffer();
   const worker = await getWorker();
+  await worker.setParameters({ tessedit_pageseg_mode: psm as never });
   const { data } = await worker.recognize(prepared, {}, { blocks: true, text: false });
   const lines: OcrLine[] = [];
   for (const block of data.blocks ?? []) {
