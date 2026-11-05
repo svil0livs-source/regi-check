@@ -24,22 +24,23 @@ export default function Hero({ dragging, storedCount, blocking, onPick, onInfo }
   return (
     <section className="relative flex flex-1 flex-col items-center justify-center px-6 pb-16">
       <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col items-center justify-center gap-10 text-center sm:gap-12">
-        <motion.p
-          {...fade(0.1)}
-          className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/80 sm:text-[10px] [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]"
-        >
-          근저당권 이전등기 · 서류 자동 대조
-        </motion.p>
-
-        <motion.h1
-          initial={reduce ? false : { opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-          className="max-w-[900px] break-keep bg-gradient-to-b from-white to-white/70 bg-clip-text font-serif text-4xl font-normal leading-[1.15] text-transparent md:text-6xl md:leading-[1.1]"
-        >
-          한 글자도 놓치지 않는
-          <br className="hidden md:block" /> 서류 대조
-        </motion.h1>
+        <div className="flex flex-col items-center gap-5">
+          <motion.h1
+            initial={reduce ? false : { opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
+            className="max-w-[900px] break-keep bg-gradient-to-b from-white to-white/70 bg-clip-text font-serif text-4xl font-normal leading-[1.15] text-transparent md:text-6xl md:leading-[1.1]"
+          >
+            근이전 신청서류 정합성
+            <br /> 자동검증 시스템
+          </motion.h1>
+          <motion.p
+            {...fade(0.2)}
+            className="break-keep text-sm font-medium tracking-wide text-white/80 [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]"
+          >
+            한 글자도 놓치지 않는 서류 대조
+          </motion.p>
+        </div>
 
         <motion.div {...fade(0.4)} className="flex flex-col items-center gap-6">
           <button

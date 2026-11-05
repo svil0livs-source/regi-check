@@ -8,7 +8,7 @@ const instrument = Instrument_Serif({ variable: "--font-instrument", subsets: ["
 const notoSerifKr = Noto_Serif_KR({ variable: "--font-noto-serif-kr", subsets: ["latin"], weight: ["300", "400"], preload: false });
 
 export const metadata: Metadata = {
-  title: "근이전 서류 검증기",
+  title: "근이전 신청서류 정합성 자동검증 시스템",
   description: "근저당권 이전등기 신청서(한글)와 등기부등본을 항목별로 대조합니다.",
 };
 
