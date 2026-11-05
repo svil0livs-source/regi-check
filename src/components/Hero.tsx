@@ -78,12 +78,12 @@ export default function Hero({ dragging, storedCount, blocking, onPick, onInfo }
         )}
       </div>
 
-      {/* 만든 사람 표시 (첫 화면 맨 아래 작은 글씨) */}
+      {/* 소속·이름 표시 (첫 화면 맨 아래) */}
       <motion.p
         {...fade(0.8, 0)}
-        className="absolute bottom-6 left-0 right-0 text-center text-[11px] tracking-[0.15em] text-white/60 [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]"
+        className="absolute bottom-7 left-0 right-0 break-keep px-6 text-center font-[family-name:var(--font-gowun-batang)] text-[15px] tracking-[0.06em] text-white/80 sm:text-lg [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]"
       >
-        만든 사람 · 유주연
+        한국자산관리공사 서울동부지역본부 유주연 차장
       </motion.p>
     </section>
   );

@@ -1,11 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Instrument_Serif, Noto_Serif_KR } from "next/font/google";
+import { Gowun_Batang, Inter, Instrument_Serif, Noto_Serif_KR } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"], weight: ["300", "400", "500", "600"] });
 const instrument = Instrument_Serif({ variable: "--font-instrument", subsets: ["latin"], weight: "400", style: ["normal", "italic"] });
 // 한글 제목용 (Instrument Serif에 한글이 없다). 글자 수가 많아 미리 불러오지 않고 쓸 때 조각으로 받는다.
 const notoSerifKr = Noto_Serif_KR({ variable: "--font-noto-serif-kr", subsets: ["latin"], weight: ["300", "400"], preload: false });
+// 첫 화면 맨 아래 소속·이름 표기용 (단아한 바탕체). 쓸 때 조각으로 받는다.
+const gowunBatang = Gowun_Batang({ variable: "--font-gowun-batang", subsets: ["latin"], weight: ["400"], preload: false });
 
 export const metadata: Metadata = {
   title: "근이전 신청서류 정합성 자동검증 시스템",
@@ -16,7 +18,7 @@ export const viewport: Viewport = { themeColor: "#000000" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="ko" className={`${inter.variable} ${instrument.variable} ${notoSerifKr.variable} h-full antialiased`}>
+    <html lang="ko" className={`${inter.variable} ${instrument.variable} ${notoSerifKr.variable} ${gowunBatang.variable} h-full antialiased`}>
       <body className="min-h-full bg-black text-white">{children}</body>
     </html>
   );
