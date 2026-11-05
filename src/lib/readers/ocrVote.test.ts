@@ -22,6 +22,11 @@ describe("voteValue", () => {
     expect(voteValue([o("주식회사 가나다"), o("주식회사가나다"), o("다른값")])).toEqual(o("주식회사 가나다"));
   });
 
+  it("같게 읽은 읽기 중 정확히 절반이 확신 낮음이면 같게 읽은 쪽을 믿고, 절반 초과면 불확실", () => {
+    expect(voteValue([o("최샘플", true), o("최샘플", true), o("최샘플"), o("최샘플"), o(null)]).uncertain).toBe(false);
+    expect(voteValue([o("최샘플", true), o("최샘플", true), o("최샘플", true), o("최샘플"), o(null)]).uncertain).toBe(true);
+  });
+
   it("스캔 얼룩으로 붙은 기호는 같은 표기로 세고, 대표는 깨끗한 쪽", () => {
     const r = voteValue([o("주식회사'차카타은행"), o("주식회사 차카타은핵"), o("주식회사 차카타은행"), o("주식회사 차카타은핵"), o("주식회사 차카타은행")]);
     expect(r).toEqual(o("주식회사 차카타은행"));
