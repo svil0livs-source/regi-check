@@ -178,9 +178,26 @@ describe("compareDocuments + summarizeCase: 건 전체", () => {
     expect(summarizeCase(results)).toBe("mismatch_found");
   });
 
-  it("등록번호 앞자리를 읽지 못하면 확인 필요", () => {
+  it("등기부에 등록번호가 없거나 읽지 못하면 그 항목은 대조하지 않는다 (나머지가 맞으면 전부 일치)", () => {
     const registry = base();
     registry.mortgageeIdFront = v(null);
+    const results = compareDocuments(base(), registry);
+    expect(results.some((r) => r.key === "mortgageeIdFront")).toBe(false);
+    expect(results.some((r) => r.key === "assigneeIdFront")).toBe(true);
+    expect(summarizeCase(results)).toBe("all_match");
+  });
+
+  it("신청서에 등록번호가 없어도 그 항목은 대조하지 않는다", () => {
+    const hwp = base();
+    hwp.assigneeIdFront = v(null);
+    const results = compareDocuments(hwp, base());
+    expect(results.some((r) => r.key === "assigneeIdFront")).toBe(false);
+    expect(summarizeCase(results)).toBe("all_match");
+  });
+
+  it("두 문서 모두 등록번호를 읽었지만 등기부 쪽 확신이 낮으면 확인 필요", () => {
+    const registry = base();
+    registry.mortgageeIdFront = { value: registry.mortgageeIdFront.value, lowConfidence: true };
     expect(summarizeCase(compareDocuments(base(), registry))).toBe("needs_review");
   });
 

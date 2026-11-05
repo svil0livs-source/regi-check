@@ -66,6 +66,9 @@ export const FIELD_DEFINITIONS: Record<
 /** 모든 세부 항목 (한 건마다 이 15개를 빠짐없이 대조한다) */
 export const ALL_FIELD_KEYS = Object.keys(FIELD_DEFINITIONS) as FieldKey[];
 
+/** 두 문서 모두에 값이 있을 때만 대조하는 항목 (등록번호 앞 6자리, PRD §5 must2). 빠져도 「전부 일치」를 막지 않는다. */
+export const OPTIONAL_FIELD_KEYS: FieldKey[] = ["mortgageeIdFront", "assigneeIdFront"];
+
 /**
  * 문서에서 읽어 온 값 하나.
  * - value가 null이면 읽지 못한 것이다 (추측해서 채우지 않는다).
