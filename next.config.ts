@@ -9,8 +9,10 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/verify": [
       "./node_modules/@tesseract.js-data/kor/4.0.0_best_int/**/*",
-      "./node_modules/tesseract.js/src/worker-script/**/*",
+      // 작업 스레드가 불러오는 파일은 자동으로 따라가지 못해서 tesseract.js 전체와 그 의존 패키지를 직접 지정한다
+      "./node_modules/tesseract.js/**/*",
       "./node_modules/tesseract.js-core/**/*",
+      "./node_modules/{bmp-js,zlibjs,regenerator-runtime,wasm-feature-detect,is-url,idb-keyval,node-fetch,whatwg-url,tr46,webidl-conversions}/**/*",
     ],
   },
   partialPrefetching: true,
