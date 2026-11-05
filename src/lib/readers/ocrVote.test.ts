@@ -1,6 +1,6 @@
 // 다수결 규칙 시험 (외부 서비스 없이)
 import { describe, expect, it } from "vitest";
-import { voteRegistryReads, voteValue } from "./ocrVote";
+import { voteNameList, voteRegistryReads, voteValue } from "./ocrVote";
 import type { RegistryRead } from "./registryOcr";
 
 const o = (text: string | null, uncertain = false) => ({ text, uncertain });
@@ -39,7 +39,8 @@ describe("voteRegistryReads", () => {
         maxClaimAmount: o("금 1원"),
         debtors: [o(owner)],
         mortgagee: o("은행"),
-        transfers: [{ rank: "1-1", receiptNumber: o("제2호"), registrationDate: o("2026년1월1일"), assignee: o("양수인") }],
+        mortgageeIdFront: o("110111"),
+        transfers: [{ rank: "1-1", receiptNumber: o("제2호"), registrationDate: o("2026년1월1일"), assignee: o("양수인"), assigneeIdFront: o("110222") }],
       },
     ],
   });
@@ -50,18 +51,53 @@ describe("voteRegistryReads", () => {
     expect(r.mortgages[0].debtors).toEqual([o("윤테스")]);
   });
 
+  // 부동산·근저당권 목록은 목록 길이로 다수결 (이름 목록은 아래 voteNameList)
+  const withProps = (count: number): RegistryRead => ({
+    ...read("가"),
+    properties: Array.from({ length: count }, () => ({ location: o("서울"), lotNumber: o("1"), unitNumber: o(""), area: o("10㎡") })),
+  });
+
   it("목록 길이가 과반으로 정해지지 않으면 그 목록은 모두 불확실", () => {
-    const r = voteRegistryReads([read("가", 1), read("가", 2), read("가", 3)]);
-    expect(r.owners.every((v) => v.uncertain)).toBe(true);
+    const r = voteRegistryReads([withProps(1), withProps(2), withProps(3)]);
+    expect(r.properties.every((p) => p.location.uncertain && p.area.uncertain)).toBe(true);
   });
 
   it("목록 길이가 과반이면 그 길이의 결과들로 다수결", () => {
-    const r = voteRegistryReads([read("가", 2), read("가", 2), read("가", 1)]);
-    expect(r.owners).toEqual([o("가"), o("가")]);
+    const r = voteRegistryReads([withProps(2), withProps(2), withProps(1)]);
+    expect(r.properties).toHaveLength(2);
+    expect(r.properties.every((p) => !p.location.uncertain)).toBe(true);
   });
 
   it("1번만 읽었으면 그대로", () => {
     const one = read("가");
     expect(voteRegistryReads([one])).toBe(one);
+  });
+});
+
+describe("voteNameList (이름 목록은 이름마다 다수결)", () => {
+  const n = (t: string) => ({ text: t, uncertain: false });
+
+  it("읽을 때마다 한 명씩 빠져도 과반에 나온 이름은 모두 넣는다", () => {
+    const r = voteNameList([[n("정임시"), n("임연습")], [n("정임시"), n("임연습")], [n("정임시")], [n("정 임시")], [n("임연습")]]);
+    expect(r).toEqual([n("정임시"), n("임연습")]);
+  });
+
+  it("한 글자 다른 표기는 같은 이름의 오독으로 묶고 많이 나온 표기를 쓴다", () => {
+    const r = voteNameList([[n("조모의")], [n("조모의")], [n("소모의")], [n("조모의")], [n("조모의")]]);
+    expect(r).toEqual([n("조모의")]);
+  });
+
+  it("과반은 아니지만 2번 이상 나온 이름은 불확실로 넣는다 (빠뜨려 불일치로 단정하지 않게)", () => {
+    const r = voteNameList([[n("A가나"), n("장견본")], [n("A가나"), n("장견본")], [n("A가나")], [n("A가나")], [n("A가나")]]);
+    expect(r).toEqual([n("A가나"), { text: "장견본", uncertain: true }]);
+  });
+
+  it("표기가 갈리면(과반 표기 없음) 불확실", () => {
+    const r = voteNameList([[n("차카타은행")], [n("차카타은핵")], [n("차카타은행")], [n("차카타은핵")], [n("차카타은잭")]]);
+    expect(r[0].uncertain).toBe(true);
+  });
+
+  it("1번만 나온 잡글자는 버린다", () => {
+    expect(voteNameList([[n("가나다")], [n("가나다")], [n("가나다"), n("주식회사 예시개발")]])).toEqual([n("가나다")]);
   });
 });

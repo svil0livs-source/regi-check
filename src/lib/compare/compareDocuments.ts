@@ -250,5 +250,7 @@ export function compareDocuments(hwp: DocumentFields, registry: DocumentFields):
       hwp.transferRegistrationDate,
       registry.transferRegistrationDate,
     ),
+    compareField("mortgageeIdFront", hwp.mortgageeIdFront, registry.mortgageeIdFront),
+    compareField("assigneeIdFront", hwp.assigneeIdFront, registry.assigneeIdFront),
   ];
 }

@@ -152,6 +152,8 @@ describe("compareDocuments + summarizeCase: 건 전체", () => {
     transferReceiptNumber: v("제67890호"),
     registrationDate: v("2020년 3월 2일"),
     transferRegistrationDate: v("2026년 11월 4일"),
+    mortgageeIdFront: v("110111"),
+    assigneeIdFront: v("110222"),
   });
 
   it("원 등기날짜와 이전 등기날짜를 둘 다 대조한다", () => {
@@ -160,6 +162,26 @@ describe("compareDocuments + summarizeCase: 건 전체", () => {
       expect.arrayContaining(["registrationDate", "transferRegistrationDate"]),
     );
     expect(results.length).toBeGreaterThanOrEqual(13);
+  });
+
+  it("등록번호 앞 6자리를 두 개(근저당권자·양수인) 대조한다", () => {
+    const results = compareDocuments(base(), base());
+    expect(results.map((r) => r.key)).toEqual(expect.arrayContaining(["mortgageeIdFront", "assigneeIdFront"]));
+    expect(summarizeCase(results)).toBe("all_match");
+  });
+
+  it("양수인 등록번호 앞자리가 한 자리 다르면 불일치 있음", () => {
+    const hwp = base();
+    hwp.assigneeIdFront = v("110223");
+    const results = compareDocuments(hwp, base());
+    expect(results.find((r) => r.key === "assigneeIdFront")?.status).toBe("mismatch");
+    expect(summarizeCase(results)).toBe("mismatch_found");
+  });
+
+  it("등록번호 앞자리를 읽지 못하면 확인 필요", () => {
+    const registry = base();
+    registry.mortgageeIdFront = v(null);
+    expect(summarizeCase(compareDocuments(base(), registry))).toBe("needs_review");
   });
 
   it("이전 등기날짜만 하루 틀려도 불일치 있음", () => {

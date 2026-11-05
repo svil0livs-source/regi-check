@@ -18,6 +18,7 @@ interface RawDoc {
   transferReceiptNumber: string;
   registrationDate: string;
   transferRegistrationDate: string;
+  extra: { persons: Record<string, { id: string }> };
 }
 interface RawCase {
   folder: string;
@@ -48,6 +49,9 @@ function toFields(d: RawDoc): DocumentFields {
     transferReceiptNumber: v(d.transferReceiptNumber),
     registrationDate: v(d.registrationDate),
     transferRegistrationDate: v(d.transferRegistrationDate),
+    // 등록번호는 앞 6자리만 (뒷자리는 쓰지 않는다)
+    mortgageeIdFront: v(d.extra.persons[d.parties.mortgagee[0]].id.split("-")[0]),
+    assigneeIdFront: v(d.extra.persons[d.parties.assignee[0]].id.split("-")[0]),
   };
 }
 

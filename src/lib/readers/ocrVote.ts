@@ -49,12 +49,61 @@ function voteList<T>(lists: T[][], merge: (items: T[]) => T, markUncertain: (ite
 
 const unsure = (v: OcrValue): OcrValue => ({ ...v, uncertain: true });
 
+/** 글자 하나 차이(같은 길이에서 한 글자만 다름)인지: 같은 이름을 잘못 읽은 것으로 본다 (예: 조모의/소모의) */
+function oneCharApart(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++diff > 1) return false;
+  return true;
+}
+
+/**
+ * 이름 목록(소유자·채무자) 다수결: 이름마다 따로 센다.
+ * 읽을 때마다 한 명씩 빠뜨리기도 해서, 목록 길이 대신 "그 이름이 나온 읽기 횟수"로 정한다.
+ * - 한 글자만 다른 표기는 같은 이름의 오독으로 묶고, 가장 많이 나온 표기를 쓴다.
+ * - 과반의 읽기에 나온 이름만 넣는다. 그 표기 자체가 과반이 아니면(오독과 갈림) 불확실.
+ * - 과반은 아니지만 2번 이상 나온 이름은 불확실로 넣는다 → 그 역할 전체가 「확인 필요」 (빠뜨려서 「불일치」로 단정하지 않게).
+ */
+export function voteNameList(lists: OcrValue[][]): OcrValue[] {
+  const n = lists.length;
+  if (n === 1) return lists[0];
+  type Cluster = { spellings: Map<string, { value: OcrValue; reads: Set<number>; flagged: number }>; reads: Set<number>; firstPos: number };
+  const clusters: Cluster[] = [];
+  lists.forEach((list, readIdx) => {
+    list.forEach((value, pos) => {
+      if (value.text === null) return;
+      const key = voteKey(value);
+      let c = clusters.find((cl) => [...cl.spellings.keys()].some((k) => k === key || oneCharApart(k, key)));
+      if (!c) {
+        c = { spellings: new Map(), reads: new Set(), firstPos: pos };
+        clusters.push(c);
+      }
+      c.firstPos = Math.min(c.firstPos, pos);
+      c.reads.add(readIdx);
+      if (!c.spellings.has(key)) c.spellings.set(key, { value, reads: new Set(), flagged: 0 });
+      const sp = c.spellings.get(key)!;
+      sp.reads.add(readIdx);
+      if (value.uncertain) sp.flagged++;
+    });
+  });
+  return clusters
+    .filter((c) => c.reads.size >= 2)
+    .sort((a, b) => a.firstPos - b.firstPos)
+    .map((c) => {
+      const [best] = [...c.spellings.values()].sort((a, b) => b.reads.size - a.reads.size);
+      const clusterMajority = c.reads.size * 2 > n;
+      const spellingMajority = best.reads.size * 2 > n;
+      return { text: best.value.text, uncertain: !clusterMajority || !spellingMajority || best.flagged * 2 >= best.reads.size };
+    });
+}
+
 function voteTransfer(items: RegistryTransfer[]): RegistryTransfer {
   return {
     rank: items[0].rank,
     receiptNumber: voteValue(items.map((t) => t.receiptNumber)),
     registrationDate: voteValue(items.map((t) => t.registrationDate)),
     assignee: voteValue(items.map((t) => t.assignee)),
+    assigneeIdFront: voteValue(items.map((t) => t.assigneeIdFront)),
   };
 }
 const unsureTransfer = (t: RegistryTransfer): RegistryTransfer => ({
@@ -62,6 +111,7 @@ const unsureTransfer = (t: RegistryTransfer): RegistryTransfer => ({
   receiptNumber: unsure(t.receiptNumber),
   registrationDate: unsure(t.registrationDate),
   assignee: unsure(t.assignee),
+  assigneeIdFront: unsure(t.assigneeIdFront),
 });
 
 function voteMortgage(items: RegistryMortgage[]): RegistryMortgage {
@@ -71,7 +121,8 @@ function voteMortgage(items: RegistryMortgage[]): RegistryMortgage {
     registrationDate: voteValue(items.map((m) => m.registrationDate)),
     maxClaimAmount: voteValue(items.map((m) => m.maxClaimAmount)),
     mortgagee: voteValue(items.map((m) => m.mortgagee)),
-    debtors: voteList(items.map((m) => m.debtors), voteValue, unsure),
+    mortgageeIdFront: voteValue(items.map((m) => m.mortgageeIdFront)),
+    debtors: voteNameList(items.map((m) => m.debtors)),
     transfers: voteList(items.map((m) => m.transfers), voteTransfer, unsureTransfer),
   };
 }
@@ -81,6 +132,7 @@ const unsureMortgage = (m: RegistryMortgage): RegistryMortgage => ({
   registrationDate: unsure(m.registrationDate),
   maxClaimAmount: unsure(m.maxClaimAmount),
   mortgagee: unsure(m.mortgagee),
+  mortgageeIdFront: unsure(m.mortgageeIdFront),
   debtors: m.debtors.map(unsure),
   transfers: m.transfers.map(unsureTransfer),
 });
@@ -105,7 +157,7 @@ export function voteRegistryReads(reads: RegistryRead[]): RegistryRead {
   if (reads.length === 1) return reads[0];
   return {
     properties: voteList(reads.map((r) => r.properties), voteProp, unsureProp),
-    owners: voteList(reads.map((r) => r.owners), voteValue, unsure),
+    owners: voteNameList(reads.map((r) => r.owners)),
     mortgages: voteList(reads.map((r) => r.mortgages), voteMortgage, unsureMortgage),
   };
 }

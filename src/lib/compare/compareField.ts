@@ -10,6 +10,7 @@ import {
 } from "@/types/verification";
 import {
   normalizeAmount,
+  normalizeIdFront,
   normalizeReceiptNumber,
   normalizeText,
   parseDate,
@@ -25,6 +26,8 @@ export function toComparable(kind: CompareKind, raw: string): string | null {
       return normalizeAmount(raw);
     case "receiptNumber":
       return normalizeReceiptNumber(raw);
+    case "idFront":
+      return normalizeIdFront(raw);
     case "date": {
       const parts = parseDate(raw);
       return parts ? `${parts.year}-${parts.month}-${parts.day}` : null;

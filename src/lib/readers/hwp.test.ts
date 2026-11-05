@@ -85,10 +85,21 @@ describe("extractHwpFields", () => {
     expect(d.parties.owner.map((x) => x.value)).toEqual(["조모의"]);
   });
 
-  it("⑤·⑥은 성명만 읽고 역할 표시·등록번호·주소는 읽지 않는다", () => {
+  it("⑤·⑥은 성명과 등록번호 앞 6자리만 읽고, 뒷자리·역할 표시·주소는 읽지 않는다", () => {
     expect(d.parties.mortgagee.map((x) => x.value)).toEqual(["주식회사 사아자캐피탈"]);
     expect(d.parties.assignee.map((x) => x.value)).toEqual(["주식회사 러머버대부"]);
-    expect(JSON.stringify(d)).not.toContain("110111-");
+    expect(d.mortgageeIdFront.value).toBe("110111");
+    expect(d.assigneeIdFront.value).toBe("110111");
+    const all = JSON.stringify(d);
+    expect(all).not.toContain("1087115"); // 등록번호 뒷자리
+    expect(all).not.toContain("1079196");
+    expect(all).not.toContain("가상길"); // 주소
+  });
+
+  it("가려진 주민등록번호(750101-*******)도 앞 6자리만 읽는다", () => {
+    const e = extractHwpFields(["⑤ 등기의무자", "홍길동", "근저당권자(양도인)", "750101-*******", "서울특별시 어딘가 1"]);
+    expect(e.mortgageeIdFront.value).toBe("750101");
+    expect(e.assigneeIdFront.value).toBeNull();
   });
 
   it("부동산이 여러 개면 '1. 1동의 건물의 표시'마다 하나씩", () => {
@@ -149,5 +160,8 @@ describe.skipIf(cases.length === 0)("시험용 한글 신청서 20건을 실제�
     for (const k of ["maxClaimAmount", "receiptNumber", "transferReceiptNumber", "registrationDate", "transferRegistrationDate"] as const) {
       expect(d[k].value, k).toBe(h[k]);
     }
+    const persons = (h as unknown as { extra: { persons: Record<string, { id: string }> } }).extra.persons;
+    expect(d.mortgageeIdFront.value).toBe(persons[h.parties.mortgagee[0]].id.split("-")[0]);
+    expect(d.assigneeIdFront.value).toBe(persons[h.parties.assignee[0]].id.split("-")[0]);
   });
 });

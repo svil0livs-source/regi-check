@@ -5,7 +5,8 @@ import "server-only";
 import { summarizeCase } from "@/lib/compare/summarize";
 import { extractHwpFields } from "@/lib/readers/hwpFields";
 import { HwpReadError, readHwpParagraphs } from "@/lib/readers/hwpText";
-import { readRegistryPdf, RegistryReadError } from "@/lib/readers/registryOcr";
+import { RegistryReadError } from "@/lib/readers/registryOcr";
+import { readRegistry } from "@/lib/readers/registryRead";
 import type { CaseSummary, FieldResult } from "@/types/verification";
 import { verifyCase } from "./verifyCase";
 
@@ -28,7 +29,7 @@ export async function processCase(folder: string, hwpFile: Buffer, pdfFile: Buff
 
   try {
     const hwp = extractHwpFields(readHwpParagraphs(hwpFile));
-    const registry = await readRegistryPdf(pdfFile, signal);
+    const registry = await readRegistry(pdfFile, signal);
     const results = verifyCase(hwp, registry);
     return { folder, summary: summarizeCase(results), results };
   } catch (err) {

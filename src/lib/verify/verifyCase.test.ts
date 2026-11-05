@@ -19,6 +19,8 @@ const hwp = (): DocumentFields => ({
   transferReceiptNumber: v("제67890호"),
   registrationDate: v("2020년 3월 2일"),
   transferRegistrationDate: v("2026년 11월 4일"),
+  mortgageeIdFront: v("110111"),
+  assigneeIdFront: v("110222"),
 });
 
 const mortgage = (over: Partial<RegistryMortgage> = {}): RegistryMortgage => ({
@@ -28,7 +30,8 @@ const mortgage = (over: Partial<RegistryMortgage> = {}): RegistryMortgage => ({
   maxClaimAmount: o("금 120,000,000원"),
   debtors: [o("김가명")],
   mortgagee: o("가나다은행"),
-  transfers: [{ rank: "1-1", receiptNumber: o("제67890호"), registrationDate: o("2026년11월4일"), assignee: o("라마바자산") }],
+  mortgageeIdFront: o("110111"),
+  transfers: [{ rank: "1-1", receiptNumber: o("제67890호"), registrationDate: o("2026년11월4일"), assignee: o("라마바자산"), assigneeIdFront: o("110222") }],
   ...over,
 });
 
@@ -100,7 +103,7 @@ describe("verifyCase: 1단계 원 접수번호로 근저당권 찾기", () => {
 describe("verifyCase: 2단계 이전 접수번호로 부기등기 찾기", () => {
   it("근저당권이전 기록이 없으면 이전 접수번호·양수인·이전 등기날짜 모두 불일치", () => {
     const rs = verifyCase(hwp(), reg([mortgage({ transfers: [] })]));
-    for (const k of ["assignee", "transferReceiptNumber", "transferRegistrationDate"]) {
+    for (const k of ["assignee", "assigneeIdFront", "transferReceiptNumber", "transferRegistrationDate"]) {
       expect(status(rs, k), k).toEqual(["mismatch"]);
     }
     expect(summarizeCase(rs)).toBe("mismatch_found");
@@ -109,8 +112,8 @@ describe("verifyCase: 2단계 이전 접수번호로 부기등기 찾기", () =>
   it("부기등기가 여러 건이면 이전 접수번호가 같은 것을 골라 대조", () => {
     const m = mortgage({
       transfers: [
-        { rank: "1-1", receiptNumber: o("제50000호"), registrationDate: o("2024년1월1일"), assignee: o("다른회사") },
-        { rank: "1-2", receiptNumber: o("제67890호"), registrationDate: o("2026년11월4일"), assignee: o("라마바자산") },
+        { rank: "1-1", receiptNumber: o("제50000호"), registrationDate: o("2024년1월1일"), assignee: o("다른회사"), assigneeIdFront: o("110333") },
+        { rank: "1-2", receiptNumber: o("제67890호"), registrationDate: o("2026년11월4일"), assignee: o("라마바자산"), assigneeIdFront: o("110222") },
       ],
     });
     expect(summarizeCase(verifyCase(hwp(), reg([m])))).toBe("all_match");
@@ -119,8 +122,8 @@ describe("verifyCase: 2단계 이전 접수번호로 부기등기 찾기", () =>
   it("부기등기 여러 건 중 같은 이전 접수번호가 없으면 이전 접수번호 불일치, 양수인·이전 날짜 확인 필요", () => {
     const m = mortgage({
       transfers: [
-        { rank: "1-1", receiptNumber: o("제50000호"), registrationDate: o("2024년1월1일"), assignee: o("A") },
-        { rank: "1-2", receiptNumber: o("제50001호"), registrationDate: o("2025년1월1일"), assignee: o("B") },
+        { rank: "1-1", receiptNumber: o("제50000호"), registrationDate: o("2024년1월1일"), assignee: o("A"), assigneeIdFront: o("110444") },
+        { rank: "1-2", receiptNumber: o("제50001호"), registrationDate: o("2025년1월1일"), assignee: o("B"), assigneeIdFront: o("110555") },
       ],
     });
     const rs = verifyCase(hwp(), reg([m]));

@@ -26,7 +26,10 @@ export type FieldKey =
   | "receiptNumber" // 원 접수번호: 원래 근저당권(주등기)의 접수번호
   | "transferReceiptNumber" // 이전 접수번호: 근저당권이전(부기등기)의 접수번호
   | "registrationDate" // 원 등기날짜: 원래 근저당권(주등기)의 날짜
-  | "transferRegistrationDate"; // 이전 등기날짜: 근저당권이전(부기등기)의 날짜
+  | "transferRegistrationDate" // 이전 등기날짜: 근저당권이전(부기등기)의 날짜
+  // 등록번호 앞 6자리 (2026-11-05 사용자 요청). 뒷자리는 가려져 있을 수 있고 개인정보라 읽지 않는다.
+  | "mortgageeIdFront" // 근저당권자(양도인)의 주민·법인등록번호 앞 6자리
+  | "assigneeIdFront"; // 양수인의 주민·법인등록번호 앞 6자리
 
 /** 값을 어떤 규칙으로 비교할지 정하는 종류 */
 export type CompareKind =
@@ -35,7 +38,8 @@ export type CompareKind =
   | "text" // 그 밖의 글자 (지번, 호수, 면적)
   | "amount" // 금액: 숫자 한 자리라도 다르면 불일치
   | "receiptNumber" // 접수번호: 숫자 한 자리라도 다르면 불일치
-  | "date"; // 날짜: 연·월·일 중 하나라도 다르면 불일치
+  | "date" // 날짜: 연·월·일 중 하나라도 다르면 불일치
+  | "idFront"; // 등록번호 앞 6자리: 한 자리라도 다르면 불일치
 
 /** 세부 항목별 소속 그룹과 비교 종류 */
 export const FIELD_DEFINITIONS: Record<
@@ -55,9 +59,11 @@ export const FIELD_DEFINITIONS: Record<
   transferReceiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
   registrationDate: { group: "registrationDate", kind: "date" },
   transferRegistrationDate: { group: "registrationDate", kind: "date" },
+  mortgageeIdFront: { group: "parties", kind: "idFront" },
+  assigneeIdFront: { group: "parties", kind: "idFront" },
 };
 
-/** 모든 세부 항목 (한 건마다 이 13개를 빠짐없이 대조한다) */
+/** 모든 세부 항목 (한 건마다 이 15개를 빠짐없이 대조한다) */
 export const ALL_FIELD_KEYS = Object.keys(FIELD_DEFINITIONS) as FieldKey[];
 
 /**
@@ -118,6 +124,8 @@ export interface DocumentFields {
   transferReceiptNumber: ExtractedValue; // 이전 접수번호 (부기등기)
   registrationDate: ExtractedValue; // 원 등기날짜 (주등기)
   transferRegistrationDate: ExtractedValue; // 이전 등기날짜 (부기등기)
+  mortgageeIdFront: ExtractedValue; // 근저당권자 등록번호 앞 6자리 (뒷자리는 담지 않는다)
+  assigneeIdFront: ExtractedValue; // 양수인 등록번호 앞 6자리 (뒷자리는 담지 않는다)
 }
 
 /**
@@ -173,4 +181,6 @@ export const FIELD_KEY_LABELS: Record<FieldKey, string> = {
   transferReceiptNumber: "이전 접수번호",
   registrationDate: "원 등기날짜",
   transferRegistrationDate: "이전 등기날짜",
+  mortgageeIdFront: "근저당권자 등록번호(앞 6자리)",
+  assigneeIdFront: "양수인 등록번호(앞 6자리)",
 };

@@ -1,5 +1,5 @@
-// 실제 글자 읽기 서비스(OpenAI)로 시험용 가짜 서류를 끝까지 대조해 정답표와 비교한다. (PLAN 17번)
-// 비용이 드는 시험이라 평소(npm test)에는 건너뛴다.
+// 실제 글자 읽기(기본 Tesseract, OCR_ENGINE=openai면 OpenAI)로 시험용 가짜 서류를 끝까지 대조해 정답표와 비교한다. (PLAN 17번)
+// 몇 분 걸리는 시험이라(OpenAI면 비용도 듦) 평소(npm test)에는 건너뛴다.
 // 실행: RUN_OCR=1 npx vitest run src/lib/verify/ocr.live.test.ts
 //       특정 건만: RUN_OCR=1 OCR_CASES=2026-0001,2026-0007 npx vitest run src/lib/verify/ocr.live.test.ts
 // 결과 요약은 tests/fixtures-build/ocr-report.json 에 남긴다 (커밋 안 함). 서류 내용은 로그에 찍지 않는다.
@@ -12,7 +12,7 @@ vi.mock("server-only", () => ({}));
 import { summarizeCase } from "@/lib/compare/summarize";
 import { extractHwpFields } from "@/lib/readers/hwpFields";
 import { readHwpParagraphs } from "@/lib/readers/hwpText";
-import { readRegistryPdf } from "@/lib/readers/registryOcr";
+import { readRegistry } from "@/lib/readers/registryRead";
 import { verifyCase } from "./verifyCase";
 
 const root = process.cwd();
@@ -47,7 +47,7 @@ describe.skipIf(!run)("실제 글자 읽기로 시험용 서류 대조", () => {
           let got = "처리 실패";
           const problems: string[] = [];
           try {
-            const reg = await readRegistryPdf(readFileSync(join(dir, "등기사항전부증명서.pdf")));
+            const reg = await readRegistry(readFileSync(join(dir, "등기사항전부증명서.pdf")));
             const results = verifyCase(hwp, reg);
             const s = summarizeCase(results);
             got = { all_match: "전부 일치", mismatch_found: "불일치 있음", needs_review: "확인 필요" }[s as "all_match"] ?? s;
@@ -67,7 +67,7 @@ describe.skipIf(!run)("실제 글자 읽기로 시험용 서류 대조", () => {
           report.push({ folder: a.folder, expected: a.expected, got, ok, problems });
         }
       };
-      await Promise.all([worker(), worker(), worker(), worker()]);
+      await Promise.all(process.env.OCR_ENGINE === "openai" ? [worker(), worker(), worker(), worker()] : [worker()]);
       report.sort((x, y) => x.folder.localeCompare(y.folder));
 
       const missed = report.filter((r) => r.problems.some((p) => p.startsWith("놓침"))).length;

@@ -4,7 +4,8 @@
 //   ① 부동산의 표시: 1동의 건물의 표시(소재·지번·건물명칭) / 전유부분의 건물의 표시(건물의 번호·구조·면적) / 대지권의 표시
 //   ④ 이전할 근저당권: "…접수 제…호로 등기한 순위 제1번 근저당권", 채권최고액, 채무자, 근저당권설정자(소유자)
 //   ⑤ 등기의무자(근저당권자, 양도인) / ⑥ 등기권리자(양수인): 성명 칸만 읽는다
-// 찾지 못한 항목은 추측하지 않고 null(읽지 못함). 주민등록번호 칸 등 대조 항목이 아닌 정보는 읽지 않는다.
+// 찾지 못한 항목은 추측하지 않고 null(읽지 못함). 대조 항목이 아닌 정보는 읽지 않는다.
+// 주민등록번호(등기용등록번호) 칸은 앞 6자리만 읽고 뒷자리는 버린다 (2026-11-05).
 // ⚠ 실제 이전등기 신청서 몇 건으로 칸 이름·위치를 꼭 다시 확인할 것.
 
 import type { DocumentFields, ExtractedValue, PropertyEntry } from "@/types/verification";
@@ -90,8 +91,16 @@ export function extractHwpFields(paragraphs: string[]): DocumentFields {
   const transfer = topReceipt(paras);
   const original = s.get("이전할근저당권") ?? [];
   const head = dateAndReceipt(original[0]);
-  // ⑤·⑥ 칸: 칸 제목 바로 다음 줄이 성명(상호·명칭). 그 뒤 줄(역할 표시·등록번호·주소)은 읽지 않는다.
+  // ⑤·⑥ 칸: 칸 제목 바로 다음 줄이 성명(상호·명칭). 역할 표시·주소는 읽지 않는다.
   const firstLine = (label: string) => (s.get(label) ?? [])[0];
+  // 등록번호는 앞 6자리만 꺼낸다. 뒷자리는 이 자리에서 버린다 (2026-11-05 사용자 요청: 앞자리만 대조)
+  const idFront = (label: string) => {
+    for (const line of s.get(label) ?? []) {
+      const m = /(?:^|\s)(\d{6})\s*-\s*[\d*]{7}(?:\s|$)/.exec(line);
+      if (m) return m[1];
+    }
+    return null;
+  };
 
   return {
     parties: {
@@ -106,5 +115,7 @@ export function extractHwpFields(paragraphs: string[]): DocumentFields {
     transferReceiptNumber: read(transfer.receipt),
     registrationDate: read(head.date),
     transferRegistrationDate: read(transfer.date),
+    mortgageeIdFront: read(idFront("등기의무자")),
+    assigneeIdFront: read(idFront("등기권리자")),
   };
 }

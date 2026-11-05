@@ -17,9 +17,9 @@ const toValue = (v: OcrValue | undefined): ExtractedValue =>
   v ? { value: v.text, lowConfidence: v.uncertain } : { value: null };
 
 /** 근저당권(주등기)에 딸린 항목 */
-const MORTGAGE_KEYS: FieldKey[] = ["mortgagee", "debtor", "maxClaimAmount", "registrationDate"];
+const MORTGAGE_KEYS: FieldKey[] = ["mortgagee", "mortgageeIdFront", "debtor", "maxClaimAmount", "registrationDate"];
 /** 근저당권이전(부기등기)에 딸린 항목 */
-const TRANSFER_KEYS: FieldKey[] = ["assignee", "transferReceiptNumber", "transferRegistrationDate"];
+const TRANSFER_KEYS: FieldKey[] = ["assignee", "assigneeIdFront", "transferReceiptNumber", "transferRegistrationDate"];
 
 /** 항목 결과를 강제로 정할 때 쓰는 값 */
 interface Forced {
@@ -98,6 +98,7 @@ function selectMortgage(reg: RegistryRead, hwp: DocumentFields) {
         forced.set("transferReceiptNumber", { status: "needs_review", reason: why });
       }
       forced.set("assignee", { status: "needs_review", reason: why });
+      forced.set("assigneeIdFront", { status: "needs_review", reason: why });
       forced.set("transferRegistrationDate", { status: "needs_review", reason: why });
     }
   }
@@ -124,6 +125,8 @@ export function registryToFields(reg: RegistryRead, mortgage?: RegistryMortgage,
     transferReceiptNumber: toValue(transfer?.receiptNumber),
     registrationDate: toValue(mortgage?.registrationDate),
     transferRegistrationDate: toValue(transfer?.registrationDate),
+    mortgageeIdFront: toValue(mortgage?.mortgageeIdFront),
+    assigneeIdFront: toValue(transfer?.assigneeIdFront),
   };
 }
 
