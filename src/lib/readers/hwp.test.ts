@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { compareDocuments } from "@/lib/compare/compareDocuments";
 import { extractHwpFields } from "./hwpFields";
 import { HwpReadError, readHwpParagraphs } from "./hwpText";
 
@@ -125,8 +126,27 @@ describe("extractHwpFields", () => {
     const e = extractHwpFields(["④ 이전할 근저당권", "채권최고액 금 1원"]);
     expect(e.receiptNumber.value).toBeNull();
     expect(e.transferRegistrationDate.value).toBeNull();
-    expect(e.parties.owner).toEqual([]);
-    expect(e.properties).toEqual([]);
+    // 칸을 못 찾으면 빈 목록(→ "한글 서류에 없음" 불일치)이 아니라 「읽지 못함」 1개
+    expect(e.parties.owner).toEqual([{ value: null }]);
+    expect(e.parties.mortgagee).toEqual([{ value: null }]);
+    expect(e.properties).toHaveLength(1);
+    expect(e.properties[0].location.value).toBeNull();
+    expect(e.properties[0].area.value).toBeNull();
+  });
+
+  it("칸을 못 찾은 신청서를 대조하면 「불일치」가 아니라 「읽지 못함」", () => {
+    const hwp = extractHwpFields(["④ 이전할 근저당권", "채권최고액 금 1원"]);
+    const reg = extractHwpFields([
+      "① 부동산의 표시", "1동의 건물의 표시", "서울특별시 마포구 공덕동 45-6 예시아파트", "건물의 번호 제2층 제201호", "면 적 59.82㎡",
+      "④ 이전할 근저당권", "2021년 7월 4일 접수 제57514호로 등기한 순위 제1번 근저당권", "채권최고액 금 1원", "채무자 조모의", "근저당권설정자(소유자) 조모의",
+      "⑤ 등기의무자", "주식회사 사아자캐피탈", "⑥ 등기권리자", "주식회사 러머버대부",
+    ]);
+    const rs = compareDocuments(hwp, reg);
+    for (const key of ["owner", "debtor", "mortgagee", "assignee", "location", "area"]) {
+      const statuses = rs.filter((r) => r.key === key).map((r) => r.status);
+      expect(statuses, key).not.toContain("mismatch");
+      expect(statuses, key).toContain("unreadable");
+    }
   });
 
   it("1동 건물 줄 형식을 모르면 소재·지번을 나누지 않는다", () => {

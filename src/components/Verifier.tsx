@@ -51,6 +51,14 @@ const STATUS_STYLE: Record<FieldStatus, string> = {
 };
 const STATUS_ORDER: Record<FieldStatus, number> = { mismatch: 0, needs_review: 1, unreadable: 2, match: 3 };
 
+/** JSON 응답이 없는 서버 오류의 화면 문구 (다시 시도해도 같은 이유로 실패하는 경우는 그렇게 알린다) */
+function httpErrorMessage(status: number): string {
+  if (status === 413) return "파일이 너무 커서 서버가 받지 못했습니다. 배포본은 한 건(한글+PDF) 합계 약 4.3MB까지 올릴 수 있습니다.";
+  if (status === 504 || status === 408) return "처리 시간이 한도(300초)를 넘었습니다. 페이지가 많은 등기부는 처리하지 못할 수 있습니다.";
+  if (status >= 500) return `서버 오류로 처리하지 못했습니다 (HTTP ${status}). 잠시 뒤 같은 폴더를 다시 고르면 이어서 처리합니다.`;
+  return `처리하지 못했습니다 (HTTP ${status}).`;
+}
+
 const signatureOf = (hwp?: File, pdf?: File) =>
   hwp && pdf ? `${hwp.size}:${hwp.lastModified}|${pdf.size}:${pdf.lastModified}` : "";
 
@@ -136,8 +144,12 @@ export default function Verifier() {
           body.set("hwp", files.get(hwpPath!)!);
           body.set("pdf", files.get(pdfPath!)!);
           const res = await fetch("/api/verify", { method: "POST", body, signal: ac.signal });
-          const json = await res.json();
-          outcome = res.ok ? json : { folder, summary: "processing_failed", results: [], error: json.error ?? `오류 (HTTP ${res.status})` };
+          // 서버 앞단(Vercel)이 막으면 JSON이 아닌 오류가 온다(413 크기 초과, 504 시간 초과). 그때도 정확한 이유를 보여 준다.
+          const json = (await res.json().catch(() => null)) as (CaseOutcome & { error?: string }) | null;
+          outcome =
+            res.ok && json
+              ? json
+              : { folder, summary: "processing_failed", results: [], error: json?.error ?? httpErrorMessage(res.status) };
         } catch (err) {
           if (ac.signal.aborted) {
             setRows((rs) => rs.map((r) => (r.check.dir === row.check.dir ? { ...r, state: "waiting" } : r)));

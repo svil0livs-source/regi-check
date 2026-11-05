@@ -6,6 +6,9 @@
 export const MAX_CASES = 30;
 /** 파일 하나의 최대 크기 (20MB) */
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+/** 한 건(한글+PDF) 합계 한도: 배포본 요청 크기 한도(약 4.5MB)에서 요청 머리말 몫을 뺀 값 */
+export const MAX_CASE_MB = 4.3;
+export const MAX_CASE_BYTES = Math.floor(MAX_CASE_MB * 1024 * 1024);
 
 /** 검사에 필요한 파일 정보 (브라우저 File에서 뽑는다) */
 export interface UploadEntry {
@@ -96,6 +99,11 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
     if (others.length || (hwpx.length && hwps.length)) reasons.push("다른 파일이 들어 있음");
     for (const f of files) {
       if (f.size > MAX_FILE_BYTES) reasons.push(`20MB 초과: ${f.name}`);
+    }
+    // 배포본(Vercel)은 요청 하나가 약 4.5MB를 넘으면 서버가 받지 못한다. 한글+PDF가 한 요청에 함께 가므로 합계로 검사한다.
+    const caseBytes = [...hwps, ...pdfs].reduce((s, f) => s + f.size, 0);
+    if (hwps.length === 1 && pdfs.length === 1 && caseBytes > MAX_CASE_BYTES) {
+      reasons.push(`두 파일 합계 ${(caseBytes / 1024 / 1024).toFixed(1)}MB — 한 건 합계 ${MAX_CASE_MB}MB까지 올릴 수 있음`);
     }
 
     const ok = reasons.length === 0;

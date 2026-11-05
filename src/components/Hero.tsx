@@ -57,7 +57,7 @@ export default function Hero({ dragging, storedCount, blocking, onPick, onInfo, 
 
           <p className="max-w-md break-keep text-xs leading-relaxed text-white/75 [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]">
             건별 폴더(한글 .hwp 1개 + 등기부등본 PDF 1개)를 끌어다 놓아도 됩니다.
-            <br className="hidden sm:block" /> 한 번에 30건까지, 파일은 20MB 이하.
+            <br className="hidden sm:block" /> 한 번에 30건까지, 한 건(한글+PDF) 합계 4.3MB 이하.
           </p>
 
           <button

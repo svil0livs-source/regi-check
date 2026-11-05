@@ -1,4 +1,4 @@
-// Design Ref: DESIGN.md §4.2 — 한글 신청서 글자에서 대조 항목 13개를 뽑는다. (PLAN 7번)
+// Design Ref: DESIGN.md §4.2 — 한글 신청서 글자에서 대조 항목 15개를 뽑는다. (PLAN 7번)
 // 양식: 사용자가 준 「근저당권변경등기신청」 양식(2026-11-05)의 틀을 이전등기에 맞춘 것.
 //   맨 위 「접수」 칸: 이전등기 접수일·접수번호
 //   ① 부동산의 표시: 1동의 건물의 표시(소재·지번·건물명칭) / 전유부분의 건물의 표시(건물의 번호·구조·면적) / 대지권의 표시
@@ -18,9 +18,18 @@ const labelOf = (p: string) => p.replace(/^[①-⑳]\s*/u, "").replace(/\s+/g, "
 /** "①" 같은 번호로 시작하는 칸 제목 줄인지 */
 const isNumberedLabel = (p: string) => /^[①-⑳]/u.test(p.trim());
 
-/** 이름 칸: 쉼표로 여러 명 */
-const splitNames = (s: string | undefined): ExtractedValue[] =>
-  (s ?? "").split(/\s*,\s*/).map((n) => n.trim()).filter(Boolean).map((n) => read(n));
+/**
+ * 이름 칸: 쉼표로 여러 명.
+ * 칸이나 줄 자체를 찾지 못했으면 빈 목록이 아니라 「읽지 못함」 1개를 돌려준다.
+ * (빈 목록이면 대조에서 "한글 서류에 없음"(불일치)으로 단정되기 때문. 2026-11-05 보완)
+ */
+const splitNames = (s: string | undefined): ExtractedValue[] => {
+  const names = (s ?? "").split(/\s*,\s*/).map((n) => n.trim()).filter(Boolean).map((n) => read(n));
+  return names.length ? names : [read(null)];
+};
+
+/** 부동산 표시를 찾지 못했을 때: 네 칸 모두 「읽지 못함」인 부동산 하나 */
+const UNREAD_PROPERTY = (): PropertyEntry => ({ location: read(null), lotNumber: read(null), unitNumber: read(null), area: read(null) });
 
 /** 번호 칸(①…) 별로 아래 줄들을 모은다 */
 function numberedSections(paras: string[]): Map<string, string[]> {
@@ -109,7 +118,10 @@ export function extractHwpFields(paragraphs: string[]): DocumentFields {
       debtor: splitNames(after(original, /^채무자\s*/)),
       owner: splitNames(after(original, /^(근저당권설정자\s*\(\s*소유자\s*\)|소유자)\s*/)),
     },
-    properties: parseProperties(s.get("부동산의표시") ?? []),
+    properties: (() => {
+      const list = parseProperties(s.get("부동산의표시") ?? []);
+      return list.length ? list : [UNREAD_PROPERTY()];
+    })(),
     maxClaimAmount: read(after(original, /^채권최고액\s*/)),
     receiptNumber: read(head.receipt),
     transferReceiptNumber: read(transfer.receipt),

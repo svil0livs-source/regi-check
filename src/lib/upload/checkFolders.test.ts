@@ -1,6 +1,6 @@
 // 업로드 검사 규칙 시험 (DESIGN.md §3.1)
 import { describe, expect, it } from "vitest";
-import { checkFolders, MAX_FILE_BYTES } from "./checkFolders";
+import { checkFolders, MAX_CASE_BYTES, MAX_FILE_BYTES } from "./checkFolders";
 
 const f = (path: string, size = 1000) => ({ path, size });
 
@@ -47,6 +47,14 @@ describe("checkFolders", () => {
   it(".hwpx는 아직 지원하지 않는다고 알려 준다", () => {
     const r = checkFolders([f("A/a.hwpx"), f("A/a.pdf")]);
     expect(r.cases[0].reasons).toContain("한글 파일이 .hwpx 형식임 (.hwp만 지원)");
+  });
+
+  it("한 건의 두 파일 합계가 4.3MB를 넘으면 문제 (배포본 요청 한도)", () => {
+    const r = checkFolders([f("A/a.hwp", 1024 * 1024), f("A/a.pdf", MAX_CASE_BYTES)]);
+    expect(r.cases[0].ok).toBe(false);
+    expect(r.cases[0].reasons.join(" ")).toContain("합계");
+    const ok = checkFolders([f("B/b.hwp", 100 * 1024), f("B/b.pdf", 3 * 1024 * 1024)]);
+    expect(ok.cases[0].ok).toBe(true);
   });
 
   it("20MB 초과 파일이 있으면 문제", () => {

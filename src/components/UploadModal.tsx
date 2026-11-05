@@ -75,7 +75,7 @@ export default function UploadModal({ open, dragging, onClose, onBrowse }: Props
               </button>
             </div>
 
-            <p className="mt-5 break-keep text-center text-xs text-white/60">한 번에 30건까지, 파일은 20MB 이하.</p>
+            <p className="mt-5 break-keep text-center text-xs text-white/60">한 번에 30건까지, 한 건(한글+PDF) 합계 4.3MB 이하.</p>
           </motion.div>
         </motion.div>
       )}

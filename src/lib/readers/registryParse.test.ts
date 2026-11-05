@@ -140,4 +140,25 @@ describe("parseRegistryLines", () => {
     expect(m.mortgagee).toEqual({ text: "주식회사 타파하은행", uncertain: false });
     expect(m.maxClaimAmount.text).toBe("금 50,000,000원");
   });
+
+  it("말소된 근저당권은 대조 후보에서 뺀다 (N번근저당권설정등기말소)", () => {
+    const lines = [...page(), L("3    1번근저당권설정등기말소   2023년1월2일    2023년1월2일    해지"), L("제1001호")];
+    const r = parseRegistryLines(lines);
+    expect(r.mortgages.map((m) => m.rank)).toEqual(["2"]);
+    expect(r.mortgages[0].transfers).toHaveLength(1);
+  });
+
+  it("근저당권변경 부기등기의 채권최고액이 원래 금액을 대신한다", () => {
+    const lines = [...page(), L("1-1  1번근저당권변경   2024년3월4일    2024년3월4일    채권최고액 금 80,000,000원"), L("제30001호       변경계약")];
+    const r = parseRegistryLines(lines);
+    expect(r.mortgages[0].maxClaimAmount.text).toBe("금 80,000,000원");
+    expect(r.mortgages[1].maxClaimAmount.text).toBe("금 359,000,000원");
+    expect(r.mortgages[0].transfers).toHaveLength(0); // 변경은 이전(양수인)으로 잡지 않는다
+  });
+
+  it("부기등기는 순위번호 앞부분으로 주등기를 찾는다 (2-1은 2번에 붙음)", () => {
+    const r = parseRegistryLines(page());
+    expect(r.mortgages[1].transfers[0].rank).toBe("2-1");
+    expect(r.mortgages[0].transfers).toHaveLength(0);
+  });
 });
