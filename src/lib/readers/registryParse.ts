@@ -218,20 +218,48 @@ function parseTransferBlock(block: ParseLine[], confMin: number): RegistryTransf
   return { rank, receiptNumber: receiptValue(block, confMin), registrationDate: dateValue(block, confMin), assignee, assigneeIdFront };
 }
 
-/** 을구: 근저당권설정(주등기)과 그 아래 근저당권이전(부기등기) */
+/**
+ * 을구: 근저당권설정(주등기)과 그 아래 근저당권이전(부기등기).
+ * 말소사항 포함 등기부에는 말소·변경 등기도 있다 (2026-11-05 보완):
+ *   - "N번근저당권설정등기말소" → N번 근저당권은 말소된 것이므로 대조 후보에서 뺀다.
+ *   - "N번근저당권변경"(부기등기 N-M)에 채권최고액이 있으면 → 그 근저당권의 채권최고액을 변경 후 금액으로 바꾼다.
+ * 부기등기(이전·변경)는 순위번호 앞부분(N-)으로 주등기를 찾고, 못 찾으면 바로 앞 주등기에 붙인다.
+ */
 function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[] {
-  const isTransfer = (l: ParseLine) => fuzzyIncludes(letters(l.text), "근저당권이전");
-  const isMortgage = (l: ParseLine) => fuzzyIncludes(letters(l.text), "근저당권설정");
+  const has = (l: ParseLine, word: string) => fuzzyIncludes(letters(l.text), word);
+  // '말소'는 짧은 낱말이라 오독 허용 없이 그대로 찾는다 (예: '주소'를 말소로 잘못 보지 않게)
+  const isCancel = (l: ParseLine) => letters(l.text).includes("말소") && has(l, "근저당권");
+  const isChange = (l: ParseLine) => !isCancel(l) && has(l, "근저당권변경");
+  const isTransfer = (l: ParseLine) => !isCancel(l) && has(l, "근저당권이전");
+  const isMortgage = (l: ParseLine) => !isCancel(l) && has(l, "근저당권설정");
   const mortgages: RegistryMortgage[] = [];
-  for (const block of blocks(lines, (l) => isTransfer(l) || isMortgage(l))) {
-    if (isTransfer(block[0])) {
-      const owner = mortgages[mortgages.length - 1];
+  const cancelled = new Set<string>();
+  const parentOf = (rank: string) => {
+    const head = /^(\d+)-/.exec(rank)?.[1];
+    return (head && mortgages.find((m) => m.rank === head)) || mortgages[mortgages.length - 1];
+  };
+  for (const block of blocks(lines, (l) => isCancel(l) || isChange(l) || isTransfer(l) || isMortgage(l))) {
+    const first = block[0];
+    if (isCancel(first)) {
+      const target = /(\d+)\s*번\s*근/.exec(first.text)?.[1];
+      if (target) cancelled.add(target);
+      continue;
+    }
+    const subRank = /^\s*(\d+\s*-\s*\d+)/.exec(first.text)?.[1]?.replace(/\s+/g, "") ?? "";
+    if (isChange(first)) {
+      const owner = parentOf(subRank);
+      const amount = amountValue(block, confMin);
+      if (owner && amount.text) owner.maxClaimAmount = amount; // 나중 변경이 앞의 금액을 대신한다
+      continue;
+    }
+    if (isTransfer(first)) {
+      const owner = parentOf(subRank);
       if (owner) owner.transfers.push(parseTransferBlock(block, confMin));
     } else {
       mortgages.push(parseMortgageBlock(block, confMin));
     }
   }
-  return mortgages;
+  return mortgages.filter((m) => !cancelled.has(m.rank));
 }
 
 /** 표제부: 1동 건물의 소재지번, 전유부분의 건물번호·면적 */

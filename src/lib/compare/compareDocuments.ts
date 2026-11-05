@@ -250,7 +250,20 @@ export function compareDocuments(hwp: DocumentFields, registry: DocumentFields):
       hwp.transferRegistrationDate,
       registry.transferRegistrationDate,
     ),
-    compareField("mortgageeIdFront", hwp.mortgageeIdFront, registry.mortgageeIdFront),
-    compareField("assigneeIdFront", hwp.assigneeIdFront, registry.assigneeIdFront),
+    ...compareIdFront("mortgageeIdFront", hwp.mortgageeIdFront, registry.mortgageeIdFront),
+    ...compareIdFront("assigneeIdFront", hwp.assigneeIdFront, registry.assigneeIdFront),
   ];
+}
+
+/**
+ * 등록번호 앞 6자리는 두 문서 모두에서 번호를 읽은 경우에만 대조한다 (PRD §5 must2, 2026-11-05 사용자 결정).
+ * 한쪽에 번호가 없거나 읽지 못하면 이 항목은 대조하지 않는다(결과에 넣지 않음). 읽었지만 확신이 낮으면 compareField가 「확인 필요」로 둔다.
+ */
+function compareIdFront(
+  key: "mortgageeIdFront" | "assigneeIdFront",
+  hwp: DocumentFields["mortgageeIdFront"],
+  registry: DocumentFields["mortgageeIdFront"],
+): FieldResult[] {
+  const has = (v: DocumentFields["mortgageeIdFront"]) => !!v.value && v.value.trim() !== "";
+  return has(hwp) && has(registry) ? [compareField(key, hwp, registry)] : [];
 }

@@ -97,6 +97,14 @@ describe("verifyCase: 1단계 원 접수번호로 근저당권 찾기", () => {
   it("등기부의 접수번호가 불확실하면 그 건으로 짝짓지 않는다", () => {
     const rs = verifyCase(hwp(), reg([mortgage({ receiptNumber: o("제11111호") }), mortgage({ receiptNumber: o("제12345호", true) })]));
     expect(summarizeCase(rs)).not.toBe("all_match");
+    // 확신 낮은 번호가 맞는 건일 수도 있으므로 「해당 접수번호 없음」(불일치)으로 단정하지 않는다
+    expect(status(rs, "receiptNumber")).toEqual(["needs_review"]);
+    expect(summarizeCase(rs)).toBe("needs_review");
+  });
+
+  it("등기부 접수번호가 모두 확실하게 읽혔는데 같은 번호가 없으면 불일치", () => {
+    const rs = verifyCase(hwp(), reg([mortgage({ receiptNumber: o("제11111호") }), mortgage({ receiptNumber: o("제22222호") })]));
+    expect(status(rs, "receiptNumber")).toEqual(["mismatch"]);
   });
 });
 

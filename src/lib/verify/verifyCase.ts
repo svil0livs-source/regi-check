@@ -40,6 +40,13 @@ function matchByReceipt<T extends { receiptNumber: OcrValue }>(list: T[], hwpRec
 
 const hwpReceiptReadable = (v: ExtractedValue) => !!v.value && normalizeReceiptNumber(v.value) !== null;
 
+/**
+ * 등기부 쪽 후보 중 접수번호를 못 읽었거나 확신이 낮은 것이 있는지.
+ * 있으면 "해당 접수번호 없음"(불일치)으로 단정하지 않는다 — 그 건이 맞는 건일 수도 있다. (확신 없으면 「확인 필요」)
+ */
+const someReceiptUnsure = (list: { receiptNumber: OcrValue }[]) =>
+  list.some((m) => !m.receiptNumber.text || m.receiptNumber.uncertain);
+
 /** 근저당권·부기등기를 고르고, 고르지 못한 경우의 강제 결과를 정한다 */
 function selectMortgage(reg: RegistryRead, hwp: DocumentFields) {
   const forced = new Map<FieldKey, Forced>();
@@ -59,15 +66,18 @@ function selectMortgage(reg: RegistryRead, hwp: DocumentFields) {
     if (hits.length === 1) {
       mortgage = hits[0];
     } else {
+      const unsure = hits.length === 0 && someReceiptUnsure(all);
       const why =
         hits.length > 1
           ? "같은 접수번호의 근저당권이 여러 건이라 어느 것과 비교할지 확신할 수 없음"
           : !hwpReceiptReadable(hwp.receiptNumber)
             ? "한글 서류의 원 접수번호를 읽지 못해 근저당권을 고를 수 없음"
-            : "한글 서류의 원 접수번호와 같은 근저당권이 없어 어느 것과 비교할지 모름";
-      if (hits.length === 0 && hwpReceiptReadable(hwp.receiptNumber)) {
+            : unsure
+              ? "등기부등본의 접수번호 일부를 확신할 수 없어 해당 근저당권을 고를 수 없음"
+              : "한글 서류의 원 접수번호와 같은 근저당권이 없어 어느 것과 비교할지 모름";
+      if (hits.length === 0 && hwpReceiptReadable(hwp.receiptNumber) && !unsure) {
         forced.set("receiptNumber", { status: "mismatch", reason: "해당 접수번호 없음", registryValue: "해당 접수번호 없음" });
-      } else if (hits.length > 1) {
+      } else if (hits.length > 1 || (unsure && hwpReceiptReadable(hwp.receiptNumber))) {
         forced.set("receiptNumber", { status: "needs_review", reason: why });
       }
       // 한글 서류 번호를 못 읽은 경우: 원 접수번호는 compareField가 「읽지 못함」으로 처리
@@ -88,13 +98,16 @@ function selectMortgage(reg: RegistryRead, hwp: DocumentFields) {
     if (hits.length === 1) {
       transfer = hits[0];
     } else {
+      const unsure = hits.length === 0 && someReceiptUnsure(transfers);
       const why =
         hits.length > 1
           ? "같은 접수번호의 근저당권이전이 여러 건이라 확신할 수 없음"
-          : "한글 서류의 이전 접수번호와 같은 근저당권이전을 찾지 못함";
-      if (hits.length === 0 && hwpReceiptReadable(hwp.transferReceiptNumber)) {
+          : unsure
+            ? "등기부등본의 이전 접수번호 일부를 확신할 수 없어 해당 근저당권이전을 고를 수 없음"
+            : "한글 서류의 이전 접수번호와 같은 근저당권이전을 찾지 못함";
+      if (hits.length === 0 && hwpReceiptReadable(hwp.transferReceiptNumber) && !unsure) {
         forced.set("transferReceiptNumber", { status: "mismatch", reason: "해당 접수번호 없음", registryValue: "해당 접수번호 없음" });
-      } else if (hits.length > 1) {
+      } else if (hits.length > 1 || (unsure && hwpReceiptReadable(hwp.transferReceiptNumber))) {
         forced.set("transferReceiptNumber", { status: "needs_review", reason: why });
       }
       forced.set("assignee", { status: "needs_review", reason: why });

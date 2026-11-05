@@ -5,7 +5,8 @@
 import "server-only";
 
 import { voteRegistryReads } from "./ocrVote";
-import { extractJpegPages, readRegistryPdf, RegistryReadError, type RegistryRead } from "./registryOcr";
+import { extractPageImages, PdfImageError } from "./pdfImages";
+import { readRegistryPdf, RegistryReadError, type RegistryRead } from "./registryOcr";
 import { DEFAULT_CONF_MIN, parseRegistryLines } from "./registryParse";
 import { recognizePage, type RecognizeOptions } from "./tesseractOcr";
 
@@ -26,17 +27,50 @@ const READS: RecognizeOptions[] = [
 export async function readRegistry(pdf: Buffer | Uint8Array, signal?: AbortSignal): Promise<RegistryRead> {
   if ((process.env.OCR_ENGINE ?? "tesseract") === "openai") return readRegistryPdf(pdf, signal);
 
-  const pages = extractJpegPages(pdf);
+  let pages: Buffer[];
+  try {
+    pages = await extractPageImages(pdf);
+  } catch (err) {
+    if (err instanceof PdfImageError) throw new RegistryReadError(err.message);
+    throw err;
+  }
   if (pages.length === 0) {
     throw new RegistryReadError("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
   }
   const confMin = Number(process.env.OCR_CONF_MIN) || DEFAULT_CONF_MIN;
+  // 서버 기능 한도(300초) 안에 「처리 실패」 이유를 돌려줄 수 있도록 읽기 시간 예산을 둔다.
+  // 예산 안에 최소 횟수(3번)를 못 읽으면 실패로 알리고, 3번 이상 읽었으면 남은 읽기를 줄여 그 결과로 다수결한다.
+  const budgetMs = Number(process.env.OCR_TIME_BUDGET_MS) || TIME_BUDGET_MS;
+  const started = Date.now();
+  const tooSlow = () =>
+    new RegistryReadError(
+      `등기부등본 페이지(${pages.length}쪽)가 많아 처리 시간 안에 다 읽지 못했습니다. 필요한 페이지만 담은 PDF로 다시 올려 주세요.`,
+    );
   const reads: RegistryRead[] = [];
+  let lastReadMs = 0;
   for (const opts of READS) {
     if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
+    const elapsed = Date.now() - started;
+    if (reads.length >= MIN_READS && elapsed + lastReadMs > budgetMs) break; // 다음 읽기가 예산을 넘길 것 같으면 멈춤
+    const t0 = Date.now();
     const lines = [];
-    for (const page of pages) lines.push(...(await recognizePage(page, opts)));
+    for (const page of pages) {
+      if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
+      if (Date.now() - started > budgetMs) {
+        if (reads.length >= MIN_READS) break;
+        throw tooSlow();
+      }
+      lines.push(...(await recognizePage(page, opts)));
+    }
+    if (Date.now() - started > budgetMs && reads.length >= MIN_READS) break; // 이번 읽기는 중간에 끊겼으므로 쓰지 않음
     reads.push(parseRegistryLines(lines, confMin));
+    lastReadMs = Date.now() - t0;
   }
+  if (reads.length < MIN_READS) throw tooSlow();
   return voteRegistryReads(reads);
 }
+
+/** 읽기 시간 예산 (서버 한도 300초 중 한글 파일 읽기·대조·응답 몫을 남김) */
+const TIME_BUDGET_MS = 230_000;
+/** 다수결에 쓸 최소 읽기 횟수 */
+const MIN_READS = 3;
