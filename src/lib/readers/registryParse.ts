@@ -67,7 +67,8 @@ const ID_RE = /[\d/]{6}\s*-\s*[\d*/]{5,}/;
 const ADDRESS_LOT_RE = /(\S*(?:특별시|광역시|특별자치시|특별자치도|도)\s+(?:\S+\s+){0,3}?\S+[동리가])\s+(\d+(?:-\d+)?)(?=\s|$)/;
 const UNIT_RE = /(제\s*\d+\s*층\s*제\s*\d+\s*)(\S)/;
 // 칸 제목: 글자 하나가 잘못 읽혀도 찾는다 (예: 근저탕권자, 재무자)
-const HOLDER_KW = /근\s*저\s*[가-힣]\s*권\s*자\s*/;
+// (근저당권자의 '근'이 '그'로 읽히거나 빠지는 경우도 있다. 값이 아니라 칸 제목만 느슨하게 찾는다)
+const HOLDER_KW = /(?:근\s*)?[저지처]\s*[가-힣]\s*권\s*자\s*/;
 const DEBTOR_KW = /[채재처]\s*무\s*자\s*/;
 
 const v = (text: string | null, uncertain: boolean): OcrValue => ({ text, uncertain });
@@ -168,7 +169,7 @@ function parseOwners(lines: ParseLine[], confMin: number): OcrValue[] {
 
 /** 금액: "금 174,000.000원"처럼 쉼표를 점으로 읽은 경우는 쉼표로 본다 (원 단위 금액에 소수점은 없다) */
 function amountValue(block: ParseLine[], confMin: number): OcrValue {
-  const hit = firstMatch(block, /[채재]\s*권\s*최\s*고\s*액\s*(금\s*[\d,.\s]+원)/);
+  const hit = firstMatch(block, /권\s*최\s*[고그]\s*액\s*(금\s*[\d,.\s]+원)/);
   if (!hit) return v(null, false);
   const raw = hit.m[1];
   const fixed = raw.replace(/(\d)\.(\d{3})(?!\d)/g, "$1,$2").replace(/\s+/g, " ");

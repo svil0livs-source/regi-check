@@ -35,7 +35,8 @@ export function voteValue(values: OcrValue[]): OcrValue {
   const flagged = best.filter((v) => v.uncertain).length;
   return {
     text: representative(best).text,
-    uncertain: !majority || flagged * 2 >= best.length,
+    // 과반이 같게 읽었고, 그 읽기 중 "절반 초과"가 확신 낮음일 때만 불확실 (정확히 절반이면 같게 읽은 쪽을 믿는다, 2026-11-05 사용자 결정)
+    uncertain: !majority || flagged * 2 > best.length,
   };
 }
 
@@ -105,7 +106,7 @@ export function voteNameList(lists: OcrValue[][]): OcrValue[] {
       const [best] = [...c.spellings.values()].sort((a, b) => b.reads.size - a.reads.size);
       const clusterMajority = c.reads.size * 2 > n;
       const spellingMajority = best.reads.size * 2 > n;
-      return { text: best.value.text, uncertain: !clusterMajority || !spellingMajority || best.flagged * 2 >= best.reads.size };
+      return { text: best.value.text, uncertain: !clusterMajority || !spellingMajority || best.flagged * 2 > best.reads.size };
     });
 }
 

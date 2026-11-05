@@ -129,4 +129,15 @@ describe("parseRegistryLines", () => {
     const lines = page().map((l) => (l.text === "장견본 506179-*******" ? L(l.text, 95, ["장견본"]) : l));
     expect(parseRegistryLines(lines).owners[1]).toEqual({ text: "장견본", uncertain: true });
   });
+
+  it("칸 제목이 '그저당권자'·'쾌권최고액'으로 읽혀도 그 줄의 값은 읽는다 (글자 값은 고치지 않음)", () => {
+    const lines = page().map((l) => {
+      if (l.text.startsWith("근저당권자 주식회사 타파하은행")) return L(l.text.replace("근저당권자", "그저당권자"));
+      if (l.text.includes("재권최고액 금 50,000,000원")) return L(l.text.replace("재권최고액", "쾌권최고액"));
+      return l;
+    });
+    const m = parseRegistryLines(lines).mortgages[0];
+    expect(m.mortgagee).toEqual({ text: "주식회사 타파하은행", uncertain: false });
+    expect(m.maxClaimAmount.text).toBe("금 50,000,000원");
+  });
 });
