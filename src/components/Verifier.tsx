@@ -8,6 +8,7 @@ import BackgroundVideo from "@/components/BackgroundVideo";
 import Hero from "@/components/Hero";
 import InfoModal, { type InfoTopic } from "@/components/InfoModal";
 import Navbar, { type NavLink } from "@/components/Navbar";
+import UploadModal from "@/components/UploadModal";
 import { checkFolders, type CaseCheck } from "@/lib/upload/checkFolders";
 import { fromDataTransfer, fromFileList, type PickedFile } from "@/lib/upload/collectFiles";
 import { clearAll, loadAll, save, type StoredOutcome } from "@/lib/storage/resultStore";
@@ -75,6 +76,7 @@ export default function Verifier() {
   const [detail, setDetail] = useState<string | null>(null);
   const [stored, setStored] = useState<Map<string, StoredOutcome>>(new Map());
   const [dragging, setDragging] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -90,6 +92,7 @@ export default function Verifier() {
 
   async function accept(picked: PickedFile[]) {
     if (running) return;
+    setUploadOpen(false);
     const map = new Map(picked.map((p) => [p.path, p.file]));
     const result = checkFolders(picked.map((p) => ({ path: p.path, size: p.file.size })));
     setFiles(map);
@@ -199,7 +202,7 @@ export default function Verifier() {
     >
       <BackgroundVideo />
       {/* 폴더를 끌고 오면 화면 전체에 놓을 자리를 보여 준다 */}
-      {dragging && (
+      {dragging && !uploadOpen && (
         <div
           aria-hidden
           className="pointer-events-none fixed inset-4 z-40 flex items-center justify-center rounded-3xl border-2 border-dashed border-white/70 bg-white/10 backdrop-blur-sm"
@@ -220,7 +223,7 @@ export default function Verifier() {
           dragging={dragging}
           storedCount={stored.size}
           blocking={blocking}
-          onPick={() => inputRef.current?.click()}
+          onPick={() => setUploadOpen(true)}
           onInfo={() => setInfo("rules")}
         />
       ) : (
@@ -300,6 +303,12 @@ export default function Verifier() {
       )}
 
       <InfoModal topic={info} onClose={closeInfo} />
+      <UploadModal
+        open={uploadOpen}
+        dragging={dragging}
+        onClose={() => setUploadOpen(false)}
+        onBrowse={() => inputRef.current?.click()}
+      />
     </main>
   );
 }
