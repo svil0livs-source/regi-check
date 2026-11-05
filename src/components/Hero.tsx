@@ -77,6 +77,14 @@ export default function Hero({ dragging, storedCount, blocking, onPick, onInfo }
           </p>
         )}
       </div>
+
+      {/* 만든 사람 표시 (첫 화면 맨 아래 작은 글씨) */}
+      <motion.p
+        {...fade(0.8, 0)}
+        className="absolute bottom-6 left-0 right-0 text-center text-[11px] tracking-[0.15em] text-white/60 [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]"
+      >
+        만든 사람 · 유주연
+      </motion.p>
     </section>
   );
 }
