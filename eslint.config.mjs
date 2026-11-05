@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 지울 파일을 옮겨 두는 곳 (검사하지 않음)
+    "trash-can/**",
   ]),
 ]);
 

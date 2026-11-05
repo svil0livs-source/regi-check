@@ -16,19 +16,23 @@ const dataDir = join(root, "tests", "fixtures-build");
 const PEOPLE = ["김가명", "이시험", "박예시", "최샘플", "정임시", "강가상", "조모의", "윤테스", "장견본", "임연습", "한더미", "오가짜"];
 const LENDERS = ["주식회사 가나다은행", "주식회사 라마바저축은행", "주식회사 사아자캐피탈", "주식회사 차카타은행"];
 const ASSIGNEES = ["주식회사 파하유동화전문", "주식회사 거너더자산관리", "주식회사 러머버대부", "주식회사 서어저신탁"];
+// 집합건물 (사용자가 준 등기사항증명서·신청서 양식 기준, 2026-11-05)
+// [소재, 지번, 건물명칭(1동), 도로명주소, 전유부분 건물번호, 전유 면적, 대지 면적, 대지권 비율]
 const PLACES = [
-  ["서울특별시 강남구 역삼동", "123-4", "101동 1001호", "84.97㎡"],
-  ["서울특별시 마포구 공덕동", "45-6", "제2층 제201호", "59.82㎡"],
-  ["경기도 성남시 분당구 정자동", "7", "102동 1502호", "101.23㎡"],
-  ["부산광역시 해운대구 우동", "1408", "제15층 제1503호", "114.56㎡"],
-  ["인천광역시 연수구 송도동", "23-1", "203동 803호", "76.41㎡"],
+  ["서울특별시 강남구 역삼동", "123-4", "가상아파트 101동", "서울특별시 강남구 가상로 12", "제10층 제1001호", "84.97㎡", "12,400㎡", "12400분의 52.31"],
+  ["서울특별시 마포구 공덕동", "45-6", "시험빌라 가동", "서울특별시 마포구 시험길 8", "제2층 제201호", "59.82㎡", "860㎡", "860분의 41.2"],
+  ["경기도 성남시 분당구 정자동", "7", "예시마을아파트 102동", "경기도 성남시 분당구 예시로 77", "제15층 제1502호", "101.23㎡", "23,100㎡", "23100분의 61.88"],
+  ["부산광역시 해운대구 우동", "1408", "견본타워", "부산광역시 해운대구 견본대로 140", "제15층 제1503호", "114.56㎡", "3,900㎡", "3900분의 38.05"],
+  ["인천광역시 연수구 송도동", "23-1", "샘플아파트 203동", "인천광역시 연수구 샘플로 23", "제8층 제803호", "76.41㎡", "18,500㎡", "18500분의 47.6"],
 ];
+const BUILDERS = ["주식회사 가짜건설", "주식회사 시험종합건설", "주식회사 예시개발"];
+const STREETS = ["서울특별시 서초구 시험대로 10", "서울특별시 종로구 가상길 5", "경기도 수원시 팔달구 예시로 33", "서울특별시 송파구 견본로 71"];
 
 const pick = (arr, i) => arr[i % arr.length];
 
 /** 오류 없는 기본 건. i로 값이 조금씩 달라진다. */
 function baseCase(i) {
-  const [location, lotNumber, unitNumber, area] = pick(PLACES, i);
+  const [location, lotNumber, building, road, unitNumber, area, landArea, ratio] = pick(PLACES, i);
   const amount = (100 + ((i * 37) % 400)) * 1_000_000; // 1억~5억 사이
   const fmt = (n) => "금 " + n.toLocaleString("en-US") + "원";
   const receipt = 10000 + ((i * 7919) % 89999);
@@ -51,6 +55,15 @@ function baseCase(i) {
     transferRegistrationDate: `2026년 ${1 + (i % 10)}월 ${1 + ((i * 3) % 27)}일`,
     // 등기부에만 있는 다른 근저당권 (근저당권 여러 건 시험용)
     otherMortgages: [],
+    // 대조하지 않지만 양식에 들어가는 내용 (읽기 코드가 헷갈리지 않는지 보기 위한 재료)
+    extra: {
+      building,
+      road,
+      landArea,
+      ratio,
+      builder: pick(BUILDERS, i),
+      transferCause: `2026년 ${1 + (i % 10)}월 ${1 + ((i * 3) % 27)}일 확정채권양도`,
+    },
   };
   return doc;
 }
@@ -96,11 +109,13 @@ const DEFS = [
     },
   },
   {
-    note: "부동산 2개 (건물 + 토지), 토지는 건물 호수가 원래 빈칸",
-    edit(r, h) {
-      const land = { location: r.properties[0].location, lotNumber: r.properties[0].lotNumber.split("-")[0] + "-9", unitNumber: "", area: "1520.3㎡" };
-      r.properties.push({ ...land });
-      h.properties = [{ ...land }, { ...h.properties[0] }]; // 순서도 다름
+    // 집합건물 등기부는 한 장에 전유부분 하나라서 '부동산 여러 개' 건은 빼고(대조 규칙은 단위 시험으로 확인),
+    // 공동 소유자가 많은 경우로 바꿨다. (2026-11-05, 사용자 양식 반영)
+    note: "공동 소유자 3명, 순서 다름",
+    edit(r, h, i) {
+      const three = [pick(PEOPLE, i), pick(PEOPLE, i + 2), pick(PEOPLE, i + 7)];
+      r.parties.owner = [...three];
+      h.parties.owner = [three[2], three[0], three[1]];
     },
   },
   {
@@ -208,6 +223,20 @@ const cases = DEFS.map((def, idx) => {
   const hwp = clone(registry);
   def.edit(registry, hwp, i);
   delete hwp.otherMortgages; // 한글 서류에는 이번 근저당권만 적는다
+  // 이름마다 가린 주민등록번호(법인은 법인등록번호)와 주소. 양식에 함께 적히지만 앱이 읽어 오면 안 되는 정보다.
+  const persons = {};
+  for (const doc of [registry, hwp]) {
+    for (const list of Object.values(doc.parties)) {
+      for (const name of list) {
+        persons[name] ??= {
+          id: name.startsWith("주식회사") ? `110111-${String(1000000 + ((name.length * 7919 + i) % 8999999))}` : `${String(500101 + i * 1013).slice(0, 6)}-*******`,
+          address: pick(STREETS, name.length + i),
+        };
+      }
+    }
+  }
+  registry.extra.persons = persons;
+  hwp.extra.persons = persons;
   const errors = (def.errors ?? []).map((key) => ({
     key,
     label: KEY_LABELS[key],

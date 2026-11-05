@@ -50,6 +50,15 @@ export function normalizeReceiptNumber(raw: string): string | null {
   return text;
 }
 
+/**
+ * 주민·법인등록번호의 앞 6자리만 꺼낸다. 예: "750101-1******" → "750101", "110111-1087115" → "110111"
+ * 뒷자리는 가려져 있을 수 있고 개인정보라 쓰지 않는다. 앞자리가 숫자 6개가 아니면 null(확신할 수 없음).
+ */
+export function normalizeIdFront(raw: string): string | null {
+  const front = normalizeText(raw).split("-")[0];
+  return /^\d{6}$/.test(front) ? front : null;
+}
+
 /** 연·월·일 */
 export interface DateParts {
   year: number;
