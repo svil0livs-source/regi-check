@@ -1,37 +1,35 @@
 // Design Ref: DESIGN.md §4.2 — 한글 신청서 글자에서 대조 항목 13개를 뽑는다. (PLAN 7번)
-// 칸 제목(라벨) 바로 아래 문단들을 그 칸의 값으로 본다. 찾지 못한 항목은 추측하지 않고 null(읽지 못함).
-// 주민등록번호 등 대조 항목이 아닌 정보는 뽑지 않는다.
-// ⚠ 지금 라벨은 시험용 가짜 서류(scripts/fixtures) 형식에 맞춘 것이다. 실제 신청서로 꼭 다시 맞춰야 한다.
+// 양식: 사용자가 준 「근저당권변경등기신청」 양식(2026-11-05)의 틀을 이전등기에 맞춘 것.
+//   맨 위 「접수」 칸: 이전등기 접수일·접수번호
+//   ① 부동산의 표시: 1동의 건물의 표시(소재·지번·건물명칭) / 전유부분의 건물의 표시(건물의 번호·구조·면적) / 대지권의 표시
+//   ④ 이전할 근저당권: "…접수 제…호로 등기한 순위 제1번 근저당권", 채권최고액, 채무자, 근저당권설정자(소유자)
+//   ⑤ 등기의무자(근저당권자, 양도인) / ⑥ 등기권리자(양수인): 성명 칸만 읽는다
+// 찾지 못한 항목은 추측하지 않고 null(읽지 못함). 주민등록번호 칸 등 대조 항목이 아닌 정보는 읽지 않는다.
+// ⚠ 실제 이전등기 신청서 몇 건으로 칸 이름·위치를 꼭 다시 확인할 것.
 
 import type { DocumentFields, ExtractedValue, PropertyEntry } from "@/types/verification";
 
-/** 칸 제목 → 내부 이름 */
-const LABELS: Record<string, string> = {
-  "이전등기 접수": "transfer",
-  "부동산의 표시": "properties",
-  "등기의 목적": "purpose",
-  "이전할 근저당권": "original",
-  "채권최고액": "maxClaimAmount",
-  "채무자": "debtor",
-  "소유자": "owner",
-  "등기의무자 (양도인, 근저당권자)": "mortgagee",
-  "등기권리자 (양수인)": "assignee",
-};
+const read = (value: string | undefined | null): ExtractedValue => ({ value: value ?? null });
 
-const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+/** 칸 이름 비교용: ①~⑳ 번호와 띄어쓰기를 뗀다 */
+const labelOf = (p: string) => p.replace(/^[①-⑳]\s*/u, "").replace(/\s+/g, "");
 
-/** 라벨별로 아래 문단들을 모은다. 다음 라벨이 나오면 끊는다. */
-function sections(paragraphs: string[]): Map<string, string[]> {
+/** "①" 같은 번호로 시작하는 칸 제목 줄인지 */
+const isNumberedLabel = (p: string) => /^[①-⑳]/u.test(p.trim());
+
+/** 이름 칸: 쉼표로 여러 명 */
+const splitNames = (s: string | undefined): ExtractedValue[] =>
+  (s ?? "").split(/\s*,\s*/).map((n) => n.trim()).filter(Boolean).map((n) => read(n));
+
+/** 번호 칸(①…) 별로 아래 줄들을 모은다 */
+function numberedSections(paras: string[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   let current: string | null = null;
-  for (const p of paragraphs.map(norm)) {
-    if (p in LABELS) {
-      current = LABELS[p];
-      out.set(current, []);
-      continue;
-    }
-    if (p.startsWith("건 번호:")) {
-      current = null;
+  for (const raw of paras) {
+    const p = raw.trim();
+    if (isNumberedLabel(p)) {
+      current = labelOf(p);
+      if (!out.has(current)) out.set(current, []);
       continue;
     }
     if (current && p) out.get(current)!.push(p);
@@ -39,51 +37,74 @@ function sections(paragraphs: string[]): Map<string, string[]> {
   return out;
 }
 
-const read = (value: string | undefined | null): ExtractedValue => ({ value: value ?? null });
+/** 맨 위 접수 칸: "접 수" 다음, "① 부동산의 표시" 전의 날짜와 "제…호" */
+function topReceipt(paras: string[]): { date: string | null; receipt: string | null } {
+  const start = paras.findIndex((p) => labelOf(p) === "접수");
+  const end = paras.findIndex((p) => labelOf(p) === "부동산의표시");
+  if (start === -1 || end === -1 || end < start) return { date: null, receipt: null };
+  const box = paras.slice(start + 1, end).map((p) => p.trim());
+  const date = box.find((p) => /^\d{4}\s*[년.\-/]\s*\d{1,2}\s*[월.\-/]\s*\d{1,2}\s*일?\.?$/.test(p)) ?? null;
+  const receipt = box.find((p) => /^제\s*[\d-]+\s*호$/.test(p))?.replace(/\s+/g, "") ?? null;
+  return { date, receipt };
+}
 
-/** "2026년 7월 19일 접수 제71426호" → 날짜, 번호 */
+/** ① 부동산의 표시: "1동의 건물의 표시"마다 부동산 하나 */
+function parseProperties(lines: string[]): PropertyEntry[] {
+  const blocks: string[][] = [];
+  for (const line of lines) {
+    if (/^(\d+\.\s*)?1동의\s*건물의\s*표시$/.test(line)) blocks.push([]);
+    else if (blocks.length) blocks[blocks.length - 1].push(line);
+  }
+  return blocks.map((b) => {
+    // 1동의 건물의 표시 바로 아래 줄: "소재 지번 건물명칭"
+    const m = /^(.+?[동리가로])\s+(\d+(?:-\d+)?)(?:번지)?(?:\s+.*)?$/.exec(b[0] ?? "");
+    const unit = b.find((l) => /^건물의\s*번호/.test(l))?.replace(/^건물의\s*번호\s*/, "");
+    // 전유부분 면적. "면 적 1층 101호 86.03㎡"처럼 앞말이 붙어도 끝의 숫자㎡만 쓴다. 대지권 토지 면적은 쓰지 않는다.
+    const areaLine = b.find((l) => /^면\s*적/.test(l));
+    const area = areaLine ? /([\d.,]+\s*(?:㎡|m²|m2|제곱미터))\s*$/.exec(areaLine)?.[1] : undefined;
+    return {
+      location: read(m?.[1]),
+      lotNumber: read(m?.[2]),
+      unitNumber: read(unit !== undefined ? unit.trim() : null),
+      area: read(area),
+    };
+  });
+}
+
+/** "2021년 7월 4일 접수 제57514호로 등기한 …" → 날짜, 번호 */
 function dateAndReceipt(line: string | undefined): { date: string | null; receipt: string | null } {
-  if (!line) return { date: null, receipt: null };
-  const m = /^(.+?)\s*접수\s*(제\s*[\d-]+\s*호)/.exec(line);
+  const m = line ? /^(.+?)\s*접수\s*(제\s*[\d-]+\s*호)/.exec(line) : null;
   return m ? { date: m[1].trim(), receipt: m[2].replace(/\s+/g, "") } : { date: null, receipt: null };
 }
 
-/** "서울특별시 마포구 공덕동 45-6 제2층 제201호 (면적 59.82㎡)" → 소재지·지번·호수·면적 */
-function parseProperty(line: string): PropertyEntry {
-  const m = /^(.+?[동리가로])\s+(\d+(?:-\d+)?)(?:\s+(.+?))?\s*\(면적\s*(.+?)\)$/.exec(line);
-  if (!m) {
-    // 형식을 모르면 칸을 나누지 않는다 (추측 금지) → 모두 읽지 못함
-    return { location: read(null), lotNumber: read(null), unitNumber: read(null), area: read(null) };
-  }
-  return {
-    location: read(m[1]),
-    lotNumber: read(m[2]),
-    unitNumber: read(m[3] ?? ""), // 호수가 없는 토지는 원래 빈칸
-    area: read(m[4]),
-  };
+/** "채권최고액 금 1원" 같은 줄에서 앞말을 뗀 값 */
+function after(lines: string[], prefix: RegExp): string | undefined {
+  const line = lines.find((l) => prefix.test(l));
+  return line?.replace(prefix, "").trim();
 }
-
-const names = (lines: string[] | undefined): ExtractedValue[] =>
-  (lines ?? []).flatMap((l) => l.split(/\s*,\s*/)).filter(Boolean).map((n) => read(n));
 
 /** 한글 신청서 문단들 → 대조 항목 */
 export function extractHwpFields(paragraphs: string[]): DocumentFields {
-  const s = sections(paragraphs);
-  const transfer = dateAndReceipt(s.get("transfer")?.[0]);
-  const original = dateAndReceipt(s.get("original")?.[0]);
+  const paras = paragraphs.map((p) => p.replace(/\s+/g, " ").trim());
+  const s = numberedSections(paras);
+  const transfer = topReceipt(paras);
+  const original = s.get("이전할근저당권") ?? [];
+  const head = dateAndReceipt(original[0]);
+  // ⑤·⑥ 칸: 칸 제목 바로 다음 줄이 성명(상호·명칭). 그 뒤 줄(역할 표시·등록번호·주소)은 읽지 않는다.
+  const firstLine = (label: string) => (s.get(label) ?? [])[0];
 
   return {
     parties: {
-      mortgagee: names(s.get("mortgagee")),
-      assignee: names(s.get("assignee")),
-      debtor: names(s.get("debtor")),
-      owner: names(s.get("owner")),
+      mortgagee: splitNames(firstLine("등기의무자")),
+      assignee: splitNames(firstLine("등기권리자")),
+      debtor: splitNames(after(original, /^채무자\s*/)),
+      owner: splitNames(after(original, /^(근저당권설정자\s*\(\s*소유자\s*\)|소유자)\s*/)),
     },
-    properties: (s.get("properties") ?? []).map(parseProperty),
-    maxClaimAmount: read(s.get("maxClaimAmount")?.[0]),
-    receiptNumber: read(original.receipt),
+    properties: parseProperties(s.get("부동산의표시") ?? []),
+    maxClaimAmount: read(after(original, /^채권최고액\s*/)),
+    receiptNumber: read(head.receipt),
     transferReceiptNumber: read(transfer.receipt),
-    registrationDate: read(original.date),
+    registrationDate: read(head.date),
     transferRegistrationDate: read(transfer.date),
   };
 }

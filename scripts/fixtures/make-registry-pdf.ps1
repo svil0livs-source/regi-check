@@ -13,9 +13,9 @@ $cases = Get-Content (Join-Path $root "tests\fixtures-build\cases.json") -Encodi
 # A4, 200dpi
 $W = 1654; $H = 2339
 $fontName = "굴림"
-# 본문 약 10pt (실제 등기부와 비슷한 크기, 200dpi 기준 28px)
-$fBody = New-Object System.Drawing.Font($fontName, 28, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-$fBold = New-Object System.Drawing.Font($fontName, 28, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+# 본문 약 9pt (실제 등기부와 비슷한 크기, 200dpi 기준 25px). 양식 칸이 많아 한 장에 맞추려고 조금 줄였다.
+$fBody = New-Object System.Drawing.Font($fontName, 25, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+$fBold = New-Object System.Drawing.Font($fontName, 25, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
 $fTitle = New-Object System.Drawing.Font($fontName, 34, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
 $fMark = New-Object System.Drawing.Font($fontName, 90, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
 $ink = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(35, 35, 35))
@@ -38,7 +38,7 @@ function Wrap($g, [string]$text, $font, [float]$width) {
 
 # 표 하나를 그리고 다음 y를 돌려준다
 function DrawTable($g, [float]$x, [float]$y, [float[]]$widths, $header, $rows) {
-  $lineH = 38
+  $lineH = 32
   $all = @(,$header) + $rows
   for ($r = 0; $r -lt $all.Count; $r++) {
     $cells = $all[$r]
@@ -66,7 +66,7 @@ function DrawTable($g, [float]$x, [float]$y, [float[]]$widths, $header, $rows) {
 
 function SectionTitle($g, [string]$text, [float]$y) {
   $g.DrawString($text, $fBold, $ink, 90, $y)
-  return $y + 48
+  return $y + 42
 }
 
 # 이미지 한 장을 담은 최소 PDF를 쓴다 (JPEG 그대로 넣기)
@@ -106,37 +106,75 @@ foreach ($c in $cases) {
   $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
   $g.Clear([System.Drawing.Color]::White)
 
-  $g.DrawString("등기사항전부증명서(말소사항 포함) - 집합건물", $fTitle, $ink, 330, 90)
-  $g.DrawString("[시험용 가짜 서류 - 실제 등기와 관계없음]   고유번호 9999-2026-$('{0:D6}' -f $idx)   건 번호 $($c.folder)", $fBody, $ink, 90, 160)
-  $y = 210
+  # 양식: 사용자가 준 「등기사항증명서(말소사항 포함) 집합건물」 샘플(2026-11-05)
+  $x = $r.extra
+  $p0 = $r.properties[0]
+  $who = { param($name) $x.persons.$name }
+  $nd = { param($s) $s -replace ' ', '' }  # 등기부는 날짜를 붙여 쓴다 (2020년3월2일)
 
-  # 표제부: 부동산의 표시
-  $y = SectionTitle $g "【 표  제  부 】 ( 부동산의 표시 )" $y
+  $g.DrawString("※ 등기사항증명서 (말소사항 포함)  집합건물  [제출용]", $fTitle, $ink, 260, 70)
+  $g.DrawString("[시험용 가짜 서류 - 실제 등기와 관계없음]   건 번호 $($c.folder)", $fBody, $ink, 90, 125)
+  $g.DrawString("[집합건물] $($p0.location) $($p0.lotNumber) $($x.building) $($p0.unitNumber)", $fBody, $ink, 90, 165)
+  $g.DrawString("고유번호 1102-2026-$('{0:D6}' -f $idx)", $fBody, $ink, 1200, 165)
+  $y = 215
+  $wide5 = [float[]]@(90, 260, 470, 380, 274)
+  # 갑구·을구: 「권리자 및 기타사항」 칸이 가장 길어서 넓게 잡는다
+  $rights5 = [float[]]@(90, 230, 250, 250, 654)
+
+  # 표제부 (1동의 건물의 표시)
+  $y = SectionTitle $g "【 표    제    부 】 ( 1동의 건물의 표시 )" $y
   $rows = @(); $n = 0
-  foreach ($p in $r.properties) { $n++; $rows += ,@("$n", "$($p.location) $($p.lotNumber)", $(if ($p.unitNumber) { $p.unitNumber } else { "" }), "철근콘크리트구조`n$($p.area)") }
-  $y = DrawTable $g 90 $y ([float[]]@(110, 760, 330, 274)) @("표시번호", "소재지번", "건물 호수", "건물내역(면적)") $rows
-  $y += 40
+  foreach ($p in $r.properties) { $n++; $rows += ,@("$n", "2005년3월2일", "$($p.location) $($p.lotNumber)`n$($x.building)`n[도로명주소] $($x.road)", "철근콘크리트구조 슬래브지붕`n15층 아파트", "도면편철장 제1책`n제30장") }
+  $y = DrawTable $g 90 $y $wide5 @("표시번호", "접    수", "소재지번, 건물명칭 및 번호", "건 물 내 역", "등기원인 및 기타사항") $rows
+  $y += 10
+  # (대지권의 목적인 토지의 표시)
+  $g.DrawString("( 대지권의 목적인 토지의 표시 )", $fBody, $ink, 600, $y); $y += 40
+  $y = DrawTable $g 90 $y ([float[]]@(90, 730, 150, 230, 274)) @("표시번호", "소 재 지 번", "지목", "면  적", "등기원인 및 기타사항") @(,@("1", "1. $($p0.location) $($p0.lotNumber)", "대", "$($x.landArea)", "2005년3월2일"))
+  $y += 30
 
-  # 갑구: 소유권
-  $y = SectionTitle $g "【 갑      구 】 ( 소유권에 관한 사항 )" $y
+  # 표제부 (전유부분의 건물의 표시)
+  $y = SectionTitle $g "【 표    제    부 】 ( 전유부분의 건물의 표시 )" $y
+  $rows = @(); $n = 0
+  foreach ($p in $r.properties) { $n++; $rows += ,@("$n", "2005년3월2일", "$($p.unitNumber)", "철근콘크리트구조 $($p.area)", "도면편철장 제1책`n제30장") }
+  $y = DrawTable $g 90 $y $wide5 @("표시번호", "접    수", "건 물 번 호", "건 물 내 역", "등기원인 및 기타사항") $rows
+  $y += 10
+  # (대지권의 표시)
+  $g.DrawString("( 대지권의 표시 )", $fBody, $ink, 680, $y); $y += 40
+  $y = DrawTable $g 90 $y ([float[]]@(90, 560, 550, 274)) @("표시번호", "대지권종류", "대지권비율", "등기원인 및 기타사항") @(,@("1", "1 소유권대지권", "$($x.ratio)", "2005년2월28일 대지권`n2005년3월2일"))
+  $y += 30
+
+  # 갑구: 소유권 (보존 → 이전. 대조할 소유자는 마지막 줄의 현재 소유자)
+  $y = SectionTitle $g "【 갑        구 】 ( 소유권에 관한 사항 )" $y
   $owners = @($r.parties.owner)
-  $ownerText = if ($owners.Count -gt 1) { ($owners | ForEach-Object { "공유자 지분 $($owners.Count)분의 1`n$_" }) -join "`n" } else { "소유자 $($owners[0])" }
-  $y = DrawTable $g 90 $y ([float[]]@(110, 230, 300, 250, 584)) @("순위번호", "등기목적", "접    수", "등기원인", "권리자 및 기타사항") @(,@("1", "소유권이전", "2012년4월9일`n제30215호", "2012년3월15일`n매매", $ownerText))
-  $y += 40
+  $ownerText = if ($owners.Count -gt 1) {
+    ($owners | ForEach-Object { "공유자 지분 $($owners.Count)분의 1`n$_ $((& $who $_).id)`n$((& $who $_).address)" }) -join "`n"
+  } else {
+    "소유자 $($owners[0]) $((& $who $owners[0]).id)`n$((& $who $owners[0]).address)"
+  }
+  # 줄 하나 = 칸 5개짜리 배열. 앞에 쉼표를 붙이면 한 겹 더 감싸져 모든 칸이 첫 칸에 몰리므로 붙이지 않는다.
+  $rows = @(
+    @("1", "소유권보존", "2005년3월2일`n제11111호", "", "소유자 $($x.builder) 110111-1111111`n$($x.road)"),
+    @("2", "소유권이전", "2012년4월9일`n제30215호", "2012년3월15일`n매매", "$ownerText`n거래가액 금300,000,000원")
+  )
+  $y = DrawTable $g 90 $y $rights5 @("순위번호", "등 기 목 적", "접    수", "등 기 원 인", "권리자 및 기타사항") $rows
+  $y += 30
 
   # 을구: 근저당권 (다른 근저당권이 있으면 그것이 1번, 이번 근저당권이 다음 번호)
-  $y = SectionTitle $g "【 을      구 】 ( 소유권 이외의 권리에 관한 사항 )" $y
+  $y = SectionTitle $g "【 을        구 】 ( 소유권 이외의 권리에 관한 사항 )" $y
   $rows = @(); $rank = 0
   foreach ($o in @($r.otherMortgages)) {
     if (-not $o) { continue }
     $rank++
-    $rows += ,@("$rank", "근저당권설정", "$($o.registrationDate -replace ' ', '')`n$($o.receiptNumber)", "$($o.registrationDate -replace ' ', '')`n설정계약", "채권최고액 $($o.maxClaimAmount)`n채무자 $($o.debtor)`n근저당권자 $($o.mortgagee)")
+    $rows += ,@("$rank", "근저당권설정", "$(& $nd $o.registrationDate)`n$($o.receiptNumber)", "$(& $nd $o.registrationDate)`n설정계약", "채권최고액 $($o.maxClaimAmount)`n채무자 $($o.debtor)`n근저당권자 $($o.mortgagee) 110111-2222222")
   }
   $rank++
-  $debtors = (@($r.parties.debtor) -join ", ")
-  $rows += ,@("$rank", "근저당권설정", "$($r.registrationDate -replace ' ', '')`n$($r.receiptNumber)", "$($r.registrationDate -replace ' ', '')`n설정계약", "채권최고액 $($r.maxClaimAmount)`n채무자 $debtors`n근저당권자 $(@($r.parties.mortgagee) -join ', ')")
-  $rows += ,@("$rank-1", "${rank}번근저당권이전", "$($r.transferRegistrationDate -replace ' ', '')`n$($r.transferReceiptNumber)", "$($r.transferRegistrationDate -replace ' ', '')`n확정채권양도", "근저당권자 $(@($r.parties.assignee) -join ', ')")
-  $y = DrawTable $g 90 $y ([float[]]@(110, 230, 300, 250, 584)) @("순위번호", "등기목적", "접    수", "등기원인", "권리자 및 기타사항") $rows
+  $debtorText = (@($r.parties.debtor) | ForEach-Object { "채무자 $_`n$((& $who $_).address)" }) -join "`n"
+  $mortgagee = @($r.parties.mortgagee)[0]
+  $assignee = @($r.parties.assignee)[0]
+  $rows += ,@("$rank", "근저당권설정", "$(& $nd $r.registrationDate)`n$($r.receiptNumber)", "$(& $nd $r.registrationDate)`n설정계약", "채권최고액 $($r.maxClaimAmount)`n$debtorText`n근저당권자 $mortgagee $((& $who $mortgagee).id)`n$((& $who $mortgagee).address)")
+  $rows += ,@("$rank-1", "${rank}번근저당권이전", "$(& $nd $r.transferRegistrationDate)`n$($r.transferReceiptNumber)", "$(& $nd ($x.transferCause -replace ' 확정채권양도$', ''))`n확정채권양도", "근저당권자 $assignee $((& $who $assignee).id)`n$((& $who $assignee).address)")
+  $y = DrawTable $g 90 $y $rights5 @("순위번호", "등 기 목 적", "접    수", "등 기 원 인", "권리자 및 기타사항") $rows
+  if ($y -gt $H - 60) { throw "$($c.folder): 내용이 한 장을 넘음 (y=$y)" }
 
   # 옅은 사선 표시
   $g.TranslateTransform(($W / 2), ($H / 2)); $g.RotateTransform(-35)
