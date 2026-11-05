@@ -22,6 +22,17 @@ describe("voteValue", () => {
     expect(voteValue([o("주식회사 가나다"), o("주식회사가나다"), o("다른값")])).toEqual(o("주식회사 가나다"));
   });
 
+  it("스캔 얼룩으로 붙은 기호는 같은 표기로 세고, 대표는 깨끗한 쪽", () => {
+    const r = voteValue([o("주식회사'차카타은행"), o("주식회사 차카타은핵"), o("주식회사 차카타은행"), o("주식회사 차카타은핵"), o("주식회사 차카타은행")]);
+    expect(r).toEqual(o("주식회사 차카타은행"));
+  });
+
+  it("기호를 무시해도 숫자·점·붙임표 차이는 다른 값 (123-4 ≠ 1234, 101.23 ≠ 10123)", () => {
+    expect(voteValue([o("123-4"), o("1234"), o("1234")]).text).toBe("1234");
+    expect(voteValue([o("101.23㎡"), o("10123㎡"), o("10123㎡")]).text).toBe("10123㎡");
+    expect(voteValue([o("123-4"), o("1234"), o("45")]).uncertain).toBe(true);
+  });
+
   it("못 읽음(null)도 과반이면 못 읽음", () => {
     expect(voteValue([o(null), o(null), o("가")]).text).toBeNull();
   });
