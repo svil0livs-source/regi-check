@@ -38,6 +38,28 @@ function getWorker(): Promise<Worker> {
 }
 
 /**
+ * 작업자 하나를 여러 요청이 함께 쓰면 페이지 해석 설정(psm)이 서로 섞이므로, 한 번에 한 페이지씩 차례로 읽는다.
+ * (CHECK 10번: 서버가 동시에 여러 건을 받을 때)
+ */
+let queue: Promise<unknown> = Promise.resolve();
+function oneAtATime<T>(task: () => Promise<T>): Promise<T> {
+  const run = queue.then(task, task);
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+/** 작업자가 도중에 죽었으면 버리고, 다음 읽기에서 새로 만든다 (CHECK 10번) */
+async function discardWorker() {
+  const old = workerPromise;
+  workerPromise = null;
+  try {
+    await (await old)?.terminate();
+  } catch {
+    // 이미 죽은 작업자는 정리할 것이 없다
+  }
+}
+
+/**
  * 스캔 페이지 사진을 배율만큼 키워(흑백) 읽는다.
  * 글자가 작으면 잘못 읽기 쉬워서, 200dpi 스캔 기준 약 2배가 가장 정확했다.
  */
@@ -59,7 +81,7 @@ export interface RecognizeOptions {
   threshold?: number;
 }
 
-export async function recognizePage(image: Buffer, opts: RecognizeOptions | number): Promise<OcrLine[]> {
+export async function recognizePage(image: Buffer, opts: RecognizeOptions | number, signal?: AbortSignal): Promise<OcrLine[]> {
   const { scale, prep = "grey", psm = "3", threshold = 170 } = typeof opts === "number" ? { scale: opts } : opts;
   const meta = await sharp(image).metadata();
   const width = Math.round((meta.width ?? 1654) * scale);
@@ -67,9 +89,18 @@ export async function recognizePage(image: Buffer, opts: RecognizeOptions | numb
   if (prep === "norm") pipeline = pipeline.normalise().sharpen();
   if (prep === "bin") pipeline = pipeline.threshold(threshold);
   const prepared = await pipeline.png().toBuffer();
-  const worker = await getWorker();
-  await worker.setParameters({ tessedit_pageseg_mode: psm as never });
-  const { data } = await worker.recognize(prepared, {}, { blocks: true, text: false });
+  const data = await oneAtATime(async () => {
+    // 차례를 기다리는 동안 취소됐으면 읽지 않는다 (CHECK 11번)
+    if (signal?.aborted) throw new DOMException("처리가 취소됐습니다.", "AbortError");
+    const worker = await getWorker();
+    try {
+      await worker.setParameters({ tessedit_pageseg_mode: psm as never });
+      return (await worker.recognize(prepared, {}, { blocks: true, text: false })).data;
+    } catch (err) {
+      await discardWorker();
+      throw err;
+    }
+  });
   const lines: OcrLine[] = [];
   for (const block of data.blocks ?? []) {
     for (const para of block.paragraphs) {

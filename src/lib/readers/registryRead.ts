@@ -60,7 +60,7 @@ export async function readRegistry(pdf: Buffer | Uint8Array, signal?: AbortSigna
         if (reads.length >= MIN_READS) break;
         throw tooSlow();
       }
-      lines.push(...(await recognizePage(page, opts)));
+      lines.push(...(await recognizePage(page, opts, signal)));
     }
     if (Date.now() - started > budgetMs && reads.length >= MIN_READS) break; // 이번 읽기는 중간에 끊겼으므로 쓰지 않음
     reads.push(parseRegistryLines(lines, confMin));

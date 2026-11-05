@@ -10,6 +10,9 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_CASE_MB = 4.3;
 export const MAX_CASE_BYTES = Math.floor(MAX_CASE_MB * 1024 * 1024);
 
+/** 한글 파일로 받는 확장자 (.hwp = 한글 97~현재, .hwpx = 신버전, .hml = 한글 XML 문서) */
+const HWP_EXTS = ["hwp", "hwpx", "hml"];
+
 /** 검사에 필요한 파일 정보 (브라우저 File에서 뽑는다) */
 export interface UploadEntry {
   /** 폴더를 포함한 경로. 예: "fixtures/2026-0001/신청서.hwp" (File.webkitRelativePath) */
@@ -67,7 +70,7 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
 
   const dirs = [...byDir.keys()];
   const isContainer = (dir: string) => dirs.some((d) => d !== dir && d.startsWith(dir === "" ? "" : dir + "/"));
-  const hasDocs = (dir: string) => byDir.get(dir)!.some((f) => ["hwp", "pdf"].includes(ext(f.name)));
+  const hasDocs = (dir: string) => byDir.get(dir)!.some((f) => HWP_EXTS.includes(ext(f.name)) || ext(f.name) === "pdf");
 
   const caseDirs = dirs.filter((d) => !(isContainer(d) && !hasDocs(d))).sort();
 
@@ -84,19 +87,19 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
 
   const cases = caseDirs.map((dir): CaseCheck => {
     const files = byDir.get(dir)!;
-    const hwps = files.filter((f) => ext(f.name) === "hwp");
+    // 한글 파일은 구버전·신버전 모두 받는다 (2026-11-05 사용자 결정). 모두 합쳐 1개여야 한다.
+    const hwps = files.filter((f) => HWP_EXTS.includes(ext(f.name)));
     const pdfs = files.filter((f) => ext(f.name) === "pdf");
-    const hwpx = files.filter((f) => ext(f.name) === "hwpx");
-    const others = files.filter((f) => !["hwp", "pdf", "hwpx"].includes(ext(f.name)));
+    const others = files.filter((f) => !HWP_EXTS.includes(ext(f.name)) && ext(f.name) !== "pdf");
     const folder = folderName(dir);
     const reasons: string[] = [];
 
     if ((nameCount.get(folder) ?? 0) > 1) reasons.push("같은 이름 폴더가 있음");
-    if (hwps.length === 0) reasons.push(hwpx.length ? "한글 파일이 .hwpx 형식임 (.hwp만 지원)" : "한글 파일 없음");
+    if (hwps.length === 0) reasons.push("한글 파일 없음");
     if (hwps.length > 1) reasons.push(`한글 파일이 ${hwps.length}개`);
     if (pdfs.length === 0) reasons.push("등기부등본 PDF 없음");
     if (pdfs.length > 1) reasons.push(`PDF가 ${pdfs.length}개`);
-    if (others.length || (hwpx.length && hwps.length)) reasons.push("다른 파일이 들어 있음");
+    if (others.length) reasons.push("다른 파일이 들어 있음");
     for (const f of files) {
       if (f.size > MAX_FILE_BYTES) reasons.push(`20MB 초과: ${f.name}`);
     }

@@ -59,6 +59,36 @@ export function normalizeIdFront(raw: string): string | null {
   return /^\d{6}$/.test(front) ? front : null;
 }
 
+/**
+ * 지번의 표기 차이를 없앤다 (2026-11-05 사용자 결정: 표기만 다른 값은 일치).
+ * "123번지4" · "123번지의4" · "123의4" → "123-4", "123번지" → "123". 숫자·"산" 같은 뜻 있는 글자는 그대로 둔다.
+ */
+export function normalizeLotNumber(raw: string): string {
+  return normalizeText(raw)
+    .replace(/(\d)번지의?(?=\d)/gu, "$1-")
+    .replace(/(\d)의(?=\d)/gu, "$1-")
+    .replace(/(\d)번지$/u, "$1");
+}
+
+/** 건물 호수의 표기 차이를 없앤다. "제2층 제201호" → "2층201호" (숫자 앞 "제"만 뗀다) */
+export function normalizeUnitNumber(raw: string): string {
+  return normalizeText(raw).replace(/제(?=\d)/gu, "");
+}
+
+/**
+ * 면적의 표기 차이를 없앤다. 단위(㎡·m²·m2·제곱미터·평방미터)는 같은 것으로 보고,
+ * 소수 끝의 0(59.820 = 59.82)도 같은 값으로 본다. 숫자+단위 모양이 아니면 정규화한 글자 그대로 비교한다.
+ */
+export function normalizeArea(raw: string): string {
+  const text = normalizeText(raw) // NFKC가 ㎡·m²를 "m2"로 바꾼다
+    .replace(/(제곱|평방)미터|m\^?2/giu, "m2");
+  const m = /^(\d+)(?:\.(\d+))?(m2)?$/u.exec(text);
+  if (!m) return text;
+  const int = m[1].replace(/^0+(?=\d)/u, "");
+  const frac = (m[2] ?? "").replace(/0+$/u, "");
+  return frac ? `${int}.${frac}` : int;
+}
+
 /** 연·월·일 */
 export interface DateParts {
   year: number;

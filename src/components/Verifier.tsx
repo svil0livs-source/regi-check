@@ -52,6 +52,9 @@ const STATUS_STYLE: Record<FieldStatus, string> = {
 const STATUS_ORDER: Record<FieldStatus, number> = { mismatch: 0, needs_review: 1, unreadable: 2, match: 3 };
 
 /** JSON 응답이 없는 서버 오류의 화면 문구 (다시 시도해도 같은 이유로 실패하는 경우는 그렇게 알린다) */
+/** 한 건 요청을 기다리는 최대 시간 (서버 한도 300초 + 여유) */
+const REQUEST_TIMEOUT_MS = 330_000;
+
 function httpErrorMessage(status: number): string {
   if (status === 413) return "파일이 너무 커서 서버가 받지 못했습니다. 배포본은 한 건(한글+PDF) 합계 약 4.3MB까지 올릴 수 있습니다.";
   if (status === 504 || status === 408) return "처리 시간이 한도(300초)를 넘었습니다. 페이지가 많은 등기부는 처리하지 못할 수 있습니다.";
@@ -91,9 +94,16 @@ export default function Verifier() {
   const [historyDetail, setHistoryDetail] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /** 저장된 결과 불러오기 (다 불러오기 전에 폴더를 골라도 끝난 건을 다시 처리하지 않도록 기다릴 때 씀, CHECK 13번) */
+  const loadRef = useRef<Promise<Map<string, StoredOutcome>> | null>(null);
+  /** 브라우저가 결과 저장을 막을 때(시크릿 창 등) 보여 줄 안내 (CHECK 12번) */
+  const [storageWarning, setStorageWarning] = useState(false);
 
   useEffect(() => {
-    loadAll().then(setStored);
+    loadRef.current = loadAll().then((m) => {
+      setStored(m);
+      return m;
+    });
   }, []);
 
   // 「폴더 선택」 버튼은 폴더째 고르게 한다 (React 타입에 없는 속성이라 직접 붙인다)
@@ -105,6 +115,7 @@ export default function Verifier() {
   async function accept(picked: PickedFile[]) {
     if (running) return;
     setUploadOpen(false);
+    const loaded = loadRef.current ? await loadRef.current : new Map<string, StoredOutcome>();
     const map = new Map(picked.map((p) => [p.path, p.file]));
     const result = checkFolders(picked.map((p) => ({ path: p.path, size: p.file.size })));
     setFiles(map);
@@ -112,7 +123,7 @@ export default function Verifier() {
     setBlocking(result.blockingError ?? null);
 
     // 이어서 처리: 같은 폴더(이름·파일 크기·수정 시각이 같음)의 끝난 결과는 다시 쓴다. 예전 결과는 「이전 결과」 화면에 남겨 둔다.
-    const saved = stored;
+    const saved = new Map([...loaded, ...stored]);
     setHistory(false);
     setRows(
       result.cases.map((check): Row => {
@@ -143,7 +154,9 @@ export default function Verifier() {
           body.set("folder", folder);
           body.set("hwp", files.get(hwpPath!)!);
           body.set("pdf", files.get(pdfPath!)!);
-          const res = await fetch("/api/verify", { method: "POST", body, signal: ac.signal });
+          // 서버 한도(300초)보다 조금 길게 기다린다. 연결이 멈춰도 끝없이 기다리지 않게 (CHECK 11번)
+          const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+          const res = await fetch("/api/verify", { method: "POST", body, signal: AbortSignal.any([ac.signal, timeout]) });
           // 서버 앞단(Vercel)이 막으면 JSON이 아닌 오류가 온다(413 크기 초과, 504 시간 초과). 그때도 정확한 이유를 보여 준다.
           const json = (await res.json().catch(() => null)) as (CaseOutcome & { error?: string }) | null;
           outcome =
@@ -155,14 +168,21 @@ export default function Verifier() {
             setRows((rs) => rs.map((r) => (r.check.dir === row.check.dir ? { ...r, state: "waiting" } : r)));
             break;
           }
-          outcome = { folder, summary: "processing_failed", results: [], error: "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다." };
-          void err;
+          const timedOut = (err as Error)?.name === "TimeoutError";
+          outcome = {
+            folder,
+            summary: "processing_failed",
+            results: [],
+            error: timedOut
+              ? `${REQUEST_TIMEOUT_MS / 1000}초 안에 응답이 없어 멈췄습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.`
+              : "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
+          };
         }
 
         // 끝난 건은 바로 보관 (창이 닫혀도 이어서 처리할 수 있게). 처리 실패는 다시 시도할 수 있게 보관하지 않는다.
         if (outcome.summary !== "processing_failed") {
           const item = { signature: signatureOf(files.get(hwpPath!), files.get(pdfPath!)), outcome, savedAt: Date.now() };
-          await save(folder, item);
+          if (!(await save(folder, item))) setStorageWarning(true);
           setStored((m) => new Map(m).set(folder, item));
         }
         setRows((rs) => rs.map((r) => (r.check.dir === row.check.dir ? { ...r, state: "done", outcome } : r)));
@@ -187,8 +207,9 @@ export default function Verifier() {
   /** 「이전 결과」 화면의 「기록 지우기」: 이 브라우저에 남은 결과를 모두 지운다 */
   async function clearHistory() {
     if (!window.confirm("이 브라우저에 남은 이전 결과를 모두 지웁니다. 지운 뒤에는 되돌릴 수 없습니다.")) return;
-    await clearAll();
+    const cleared = await clearAll();
     setStored(new Map());
+    if (!cleared) window.alert("이 브라우저의 저장소를 지우지 못했습니다. 브라우저 설정에서 사이트 데이터를 직접 지워 주세요.");
     setHistoryDetail(null);
   }
 
@@ -214,12 +235,24 @@ export default function Verifier() {
         setDragging(true);
       }}
       onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragging(false);
+        // 창 밖으로 나가면 relatedTarget이 없다 → 안내를 닫는다 (CHECK 14번)
+        if (e.currentTarget === e.target || e.relatedTarget === null) setDragging(false);
       }}
       onDrop={async (e) => {
         e.preventDefault();
         setDragging(false);
-        await accept(await fromDataTransfer(e.dataTransfer));
+        if (running) {
+          setBlocking("검증하는 중에는 폴더를 새로 올릴 수 없습니다. 끝난 뒤(또는 「새 검증 시작」 뒤) 다시 올려 주세요.");
+          return;
+        }
+        let picked: PickedFile[];
+        try {
+          picked = await fromDataTransfer(e.dataTransfer);
+        } catch {
+          setBlocking("끌어다 놓은 폴더를 읽지 못했습니다. 「폴더 선택」으로 다시 골라 주세요.");
+          return;
+        }
+        await accept(picked);
       }}
     >
       <BackgroundVideo />
@@ -254,6 +287,11 @@ export default function Verifier() {
           {blocking && (
             <p role="alert" className="mb-4 rounded-2xl border border-red-300/30 bg-red-400/10 px-4 py-3 text-sm text-red-100">
               {blocking}
+            </p>
+          )}
+          {storageWarning && (
+            <p role="status" className="mb-4 break-keep rounded-2xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              이 브라우저가 결과 저장을 막고 있습니다(시크릿 창 등). 지금 화면의 결과는 볼 수 있지만, 새로고침하거나 창을 닫으면 사라지고 「이전 결과」에도 남지 않습니다.
             </p>
           )}
 
@@ -328,7 +366,7 @@ export default function Verifier() {
                   </h1>
                   <p className="mt-2 text-sm text-white/60">
                     <b className="font-semibold text-white">{counts.done}</b> / {counts.total}건 완료
-                    {running && " · 한 건에 30초 안팎 걸립니다. 정확도를 위해 여러 번 읽습니다."}
+                    {running && " · 한 건에 45초쯤 걸립니다. 정확도를 위해 여러 번 읽습니다."}
                   </p>
                 </div>
                 <button

@@ -2,6 +2,9 @@
 import { describe, expect, it } from "vitest";
 import {
   normalizeAmount,
+  normalizeArea,
+  normalizeLotNumber,
+  normalizeUnitNumber,
   normalizeReceiptNumber,
   normalizeText,
   parseDate,
@@ -91,5 +94,29 @@ describe("parseDate", () => {
 
   it("형식이 다르면 null", () => {
     expect(parseDate("11월 4일")).toBeNull();
+  });
+});
+
+// 2026-11-05 사용자 결정: 지번·면적·호수는 표기만 다르면 같은 값
+describe("표기만 다른 지번·면적·호수", () => {
+  it("지번: 123-4 = 123번지4 = 123번지의4 = 123의4, 123번지 = 123", () => {
+    for (const s of ["123번지4", "123번지의4", "123의4", "123 번지 4"]) expect(normalizeLotNumber(s), s).toBe("123-4");
+    expect(normalizeLotNumber("123번지")).toBe("123");
+  });
+  it("지번: 숫자나 '산'이 다르면 다른 값", () => {
+    expect(normalizeLotNumber("123-5")).not.toBe(normalizeLotNumber("123번지4"));
+    expect(normalizeLotNumber("산12")).not.toBe(normalizeLotNumber("12"));
+  });
+  it("면적: ㎡·m²·m2·제곱미터·평방미터, 소수 끝 0은 같은 값", () => {
+    for (const s of ["59.82㎡", "59.82 m²", "59.82m2", "59.82제곱미터", "59.82 평방미터", "59.820㎡", "59.82"]) expect(normalizeArea(s), s).toBe("59.82");
+    expect(normalizeArea("84.00㎡")).toBe("84");
+  });
+  it("면적: 숫자 한 자리라도 다르면 다른 값", () => {
+    expect(normalizeArea("59.83㎡")).not.toBe(normalizeArea("59.82㎡"));
+    expect(normalizeArea("5.982㎡")).not.toBe(normalizeArea("59.82㎡"));
+  });
+  it("호수: 제2층 제201호 = 2층 201호", () => {
+    expect(normalizeUnitNumber("제2층 제201호")).toBe(normalizeUnitNumber("2층 201호"));
+    expect(normalizeUnitNumber("제2층 제202호")).not.toBe(normalizeUnitNumber("2층 201호"));
   });
 });
