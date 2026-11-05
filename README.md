@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# REGI-CHECK — 근이전 신청서류 정합성 자동검증 시스템
 
-## Getting Started
+**REAL ESTATE REGISTRATION DOCUMENT CHECK**
 
-First, run the development server:
+근저당권 이전등기 신청서(한글 `.hwp`)와 등기부등본(스캔 PDF)을 항목별로 자동 대조해, 틀린 곳을 찾아 주는 웹 앱입니다.
+눈으로 두 서류를 맞춰 보다가 숫자·이름 오류를 놓쳐 등기가 반려되는 일을 줄이는 것이 목표입니다.
+
+> 최우선 가치는 **정확도**입니다. 글자를 확신할 수 없으면 「일치」라고 하지 않고 「확인 필요」로 표시합니다.
+
+## 무엇을 하나요
+
+1. 건별 폴더(폴더 1개 = 한글 신청서 1개 + 등기부등본 PDF 1개)를 여러 개 올립니다. (끌어다 놓기 또는 폴더 선택, 한 번에 30건·파일당 20MB 이하)
+2. 서버가 한글 파일의 글자를 읽고, 스캔된 등기부등본은 Tesseract로 글자를 읽습니다.
+3. **등기부등본을 정답**으로 보고 두 서류의 값을 대조합니다.
+4. 건별로 「전부 일치」 / 「불일치 있음」 / 「확인 필요」를 보여 주고, 문제가 있는 건은 두 서류의 값을 나란히 보여 줍니다.
+
+### 대조하는 항목
+
+- 당사자: 근저당권자·양수인·채무자·소유자 (여러 명이면 순서와 관계없이 짝지어 대조)
+- 부동산 표시: 소재지·지번·건물 호수·전유부분 면적 (여러 개 가능)
+- 채권최고액
+- 접수번호와 등기날짜: 원래 근저당권과 이전등기 둘 다
+- 근저당권자·양수인의 등록번호 **앞 6자리** (뒷자리는 읽지도 저장하지도 않음)
+
+공백·쉼표 차이는 같은 값으로 보고, 한자는 읽지 않고 지운 뒤 비교합니다. 그 밖에는 한 글자·한 자리라도 다르면 불일치입니다.
+
+## 개인정보
+
+- 스캔 글자 읽기는 **서버 안의 Tesseract**로 하며 서류를 외부 서비스로 보내지 않습니다. (OpenAI 방식은 `OCR_ENGINE=openai`로 선택할 때만 쓰입니다.)
+- 읽은 원문은 처리하는 동안에만 쓰고 바로 버리며, 서류 내용을 로그에 남기지 않습니다.
+- 끝난 건의 **대조 결과**는 「이전 결과」에서 다시 볼 수 있도록 사용자의 브라우저(IndexedDB)에만 보관합니다. 서버에는 저장하지 않으며, 「기록 지우기」로 지웁니다.
+- 로그인·회원가입은 없습니다.
+
+## 기술 스택
+
+Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Vitest · Tesseract.js · sharp · hls.js · motion
+
+배포는 Vercel을 사용합니다.
+
+## 실행하기
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev     # http://localhost:3000
+npm run lint    # 코드 검사
+npm run test    # 대조 규칙 자동 시험
+npm run build   # 프로덕션 빌드
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+환경 변수(`.env`, 선택 사항):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| 이름 | 설명 |
+|---|---|
+| `OCR_ENGINE` | `tesseract`(기본) 또는 `openai` |
+| `OPENAI_API_KEY` | `OCR_ENGINE=openai`일 때만 필요 |
+| `OCR_CONF_MIN` | 글자 읽기 확신도 기준(기본 60) |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 문서
 
-## Learn More
+- [PRD.md](PRD.md) — 제품 요구사항
+- [PLAN.md](PLAN.md) — 작업 계획과 진행 상황
+- [DESIGN.md](DESIGN.md) — 설계
+- [CLAUDE.md](CLAUDE.md) — 프로젝트 규칙
 
-To learn more about Next.js, take a look at the following resources:
+## 현재 상태와 한계
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- 시험용 가짜 서류 20건으로 확인한 결과: 심어 둔 오류는 **놓침 0건**, 오류 없는 서류가 「전부 일치」가 아니게 나온 **오탐은 5건**입니다(목표 2건 이하). 놓치기보다 「확인 필요」로 올리는 쪽을 택했기 때문입니다.
+- 시험은 실제 서류 양식을 흉내 낸 가짜 서류로 했습니다. 실제 서류(가명 처리)로 양식을 다시 확인해야 합니다.
+- 손글씨·저화질 서류, 근저당권 이전 외 등기, 신청서 수정·작성은 범위 밖입니다.
+- `.hwp`(한글 5.x)만 읽으며 `.hwpx`는 지원하지 않습니다.
