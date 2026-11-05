@@ -55,6 +55,7 @@ const signatureOf = (hwp?: File, pdf?: File) =>
   hwp && pdf ? `${hwp.size}:${hwp.lastModified}|${pdf.size}:${pdf.lastModified}` : "";
 
 const NAV_LINKS: NavLink[] = [
+  { id: "history", label: "이전 결과" },
   { id: "rules", label: "검증 기준" },
   { id: "privacy", label: "개인정보" },
 ];
@@ -77,6 +78,9 @@ export default function Verifier() {
   const [stored, setStored] = useState<Map<string, StoredOutcome>>(new Map());
   const [dragging, setDragging] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  /** 「이전 결과」 화면을 보는 중, 그리고 거기서 상세를 연 폴더 이름 */
+  const [history, setHistory] = useState(false);
+  const [historyDetail, setHistoryDetail] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -99,14 +103,9 @@ export default function Verifier() {
     setDetail(null);
     setBlocking(result.blockingError ?? null);
 
-    // 이어서 처리: 같은 폴더(이름·파일 크기·수정 시각이 같음)의 끝난 결과는 다시 쓰고, 하나도 안 겹치면 예전 결과는 지운다
-    let saved = stored;
-    const overlaps = result.cases.some((c) => c.ok && saved.get(c.folder)?.signature === signatureOf(map.get(c.hwpPath!), map.get(c.pdfPath!)));
-    if (!overlaps && saved.size > 0) {
-      await clearAll();
-      saved = new Map();
-      setStored(saved);
-    }
+    // 이어서 처리: 같은 폴더(이름·파일 크기·수정 시각이 같음)의 끝난 결과는 다시 쓴다. 예전 결과는 「이전 결과」 화면에 남겨 둔다.
+    const saved = stored;
+    setHistory(false);
     setRows(
       result.cases.map((check): Row => {
         if (!check.ok) return { check, state: "done", outcome: { folder: check.folder, summary: "file_problem", results: [], error: check.reasons.join(", ") } };
@@ -164,14 +163,24 @@ export default function Verifier() {
 
   async function reset() {
     abortRef.current?.abort();
-    await clearAll();
-    setStored(new Map());
     setRows([]);
     setFiles(new Map());
     setBlocking(null);
     setDetail(null);
+    setHistory(false);
+    setHistoryDetail(null);
     if (inputRef.current) inputRef.current.value = "";
   }
+
+  /** 「이전 결과」 화면의 「기록 지우기」: 이 브라우저에 남은 결과를 모두 지운다 */
+  async function clearHistory() {
+    if (!window.confirm("이 브라우저에 남은 이전 결과를 모두 지웁니다. 지운 뒤에는 되돌릴 수 없습니다.")) return;
+    await clearAll();
+    setStored(new Map());
+    setHistoryDetail(null);
+  }
+
+  const historyList = useMemo(() => [...stored.entries()].sort((a, b) => b[1].savedAt - a[1].savedAt), [stored]);
 
   const counts = useMemo(() => {
     const ok = rows.filter((r) => r.check.ok);
@@ -181,8 +190,9 @@ export default function Verifier() {
   const detailRow = rows.find((r) => r.check.dir === detail);
   const [info, setInfo] = useState<InfoTopic | null>(null);
   const closeInfo = useCallback(() => setInfo(null), []);
-  const showHero = rows.length === 0;
-  const hasWork = rows.length > 0 || stored.size > 0;
+  const showHero = rows.length === 0 && !history;
+  const hasWork = rows.length > 0 || history;
+  const historyDetailItem = historyDetail ? stored.get(historyDetail) : undefined;
 
   return (
     <main
@@ -214,7 +224,7 @@ export default function Verifier() {
 
       <Navbar
         links={NAV_LINKS}
-        onLink={(id) => setInfo(id as InfoTopic)}
+        onLink={(id) => (id === "history" ? (setHistory(true), setHistoryDetail(null)) : setInfo(id as InfoTopic))}
         action={hasWork ? { label: "새 검증 시작", onClick: reset } : null}
       />
 
@@ -225,6 +235,7 @@ export default function Verifier() {
           blocking={blocking}
           onPick={() => setUploadOpen(true)}
           onInfo={() => setInfo("rules")}
+          onHistory={() => setHistory(true)}
         />
       ) : (
         <div className="relative z-10 mx-auto w-full max-w-5xl flex-1 px-4 pb-16 sm:px-6">
@@ -234,7 +245,68 @@ export default function Verifier() {
             </p>
           )}
 
-          {!detailRow ? (
+          {history ? (
+            historyDetailItem ? (
+              <Detail outcome={historyDetailItem.outcome} onBack={() => setHistoryDetail(null)} />
+            ) : (
+              <section aria-label="이전 결과" className="glass-panel liquid-glass rounded-3xl p-5 sm:p-8">
+                <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/60">이전 결과</p>
+                    <h1 className="mt-2 font-serif text-3xl font-normal leading-tight text-white sm:text-4xl">지금까지 끝낸 검증</h1>
+                    <p className="mt-2 break-keep text-sm text-white/60">
+                      <b className="font-semibold text-white">{historyList.length}</b>건 · 이 컴퓨터의 이 브라우저에만 보관됩니다. 다른 기기에서는 보이지 않습니다.
+                    </p>
+                  </div>
+                  <button
+                    onClick={clearHistory}
+                    disabled={historyList.length === 0}
+                    className="glass-pill border border-white/20 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:border-red-300/60 hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    기록 지우기
+                  </button>
+                </div>
+                {historyList.length === 0 ? (
+                  <p className="rounded-2xl bg-white/5 px-4 py-10 text-center text-sm text-white/60">아직 끝낸 검증이 없습니다.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl ring-1 ring-white/10">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-white/5 text-white/60">
+                        <tr>
+                          <th scope="col" className="px-4 py-3 font-medium">폴더 이름</th>
+                          <th scope="col" className="px-4 py-3 font-medium">결과</th>
+                          <th scope="col" className="px-4 py-3 font-medium">검증한 때</th>
+                          <th scope="col" className="px-4 py-3"><span className="sr-only">자세히</span></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/10">
+                        {historyList.map(([folder, item]) => {
+                          const s = item.outcome.summary;
+                          const canOpen = s === "mismatch_found" || s === "needs_review";
+                          return (
+                            <tr key={folder} className="transition-colors hover:bg-white/[0.03]">
+                              <td className="px-4 py-3 font-mono text-white">{folder}</td>
+                              <td className="px-4 py-3">
+                                <Badge summary={s} />
+                              </td>
+                              <td className="px-4 py-3 text-white/60">{new Date(item.savedAt).toLocaleString("ko-KR")}</td>
+                              <td className="px-4 py-3 text-right">
+                                {canOpen && (
+                                  <button onClick={() => setHistoryDetail(folder)} className="rounded text-sm font-medium text-violet-200 hover:text-white hover:underline">
+                                    자세히
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )
+          ) : !detailRow ? (
             <section aria-label="건별 결과" className="glass-panel liquid-glass rounded-3xl p-5 sm:p-8">
               <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
                 <div>
