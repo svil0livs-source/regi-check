@@ -198,6 +198,15 @@ export default function Verifier() {
       }}
     >
       <BackgroundVideo />
+      {/* 폴더를 끌고 오면 화면 전체에 놓을 자리를 보여 준다 */}
+      {dragging && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-4 z-40 flex items-center justify-center rounded-3xl border-2 border-dashed border-white/70 bg-white/10 backdrop-blur-sm"
+        >
+          <p className="font-serif text-3xl text-white [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]">여기에 폴더를 놓으세요</p>
+        </div>
+      )}
       <input ref={inputRef} type="file" multiple hidden onChange={(e) => accept(fromFileList(e.target.files))} />
 
       <Navbar
