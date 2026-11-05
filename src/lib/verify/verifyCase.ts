@@ -6,6 +6,7 @@ import { compareDocuments } from "@/lib/compare/compareDocuments";
 import { normalizeReceiptNumber } from "@/lib/compare/normalize";
 import {
   FIELD_DEFINITIONS,
+  OPTIONAL_FIELD_KEYS,
   type DocumentFields,
   type ExtractedValue,
   type FieldKey,
@@ -20,6 +21,9 @@ const toValue = (v: OcrValue | undefined): ExtractedValue =>
 const MORTGAGE_KEYS: FieldKey[] = ["mortgagee", "mortgageeIdFront", "debtor", "maxClaimAmount", "registrationDate"];
 /** 근저당권이전(부기등기)에 딸린 항목 */
 const TRANSFER_KEYS: FieldKey[] = ["assignee", "assigneeIdFront", "transferReceiptNumber", "transferRegistrationDate"];
+
+/** 부동산 표시 항목 */
+const PROPERTY_KEYS: FieldKey[] = ["location", "lotNumber", "unitNumber", "area"];
 
 /** 항목 결과를 강제로 정할 때 쓰는 값 */
 interface Forced {
@@ -145,6 +149,10 @@ export function registryToFields(reg: RegistryRead, mortgage?: RegistryMortgage,
 
 /** 한쪽 문서의 항목 값을 보기 좋게 합친다 (강제 결과의 한글 서류 칸에 쓰기 위해) */
 function hwpValueOf(hwp: DocumentFields, key: FieldKey): string | null {
+  if (PROPERTY_KEYS.includes(key)) {
+    const k = key as keyof DocumentFields["properties"][number];
+    return hwp.properties.length ? hwp.properties.map((p) => p[k].value ?? "(읽지 못함)").join(", ") : null;
+  }
   if (key in hwp.parties) {
     const list = hwp.parties[key as keyof DocumentFields["parties"]];
     return list.length ? list.map((v) => v.value ?? "(읽지 못함)").join(", ") : null;
@@ -163,6 +171,14 @@ function hwpUnreadable(hwp: DocumentFields, key: FieldKey): boolean {
 /** 건 하나를 대조한다: 근저당권 고르기 → 항목 비교 → 고르지 못한 항목은 강제 결과로 바꾸기 */
 export function verifyCase(hwp: DocumentFields, reg: RegistryRead): FieldResult[] {
   const { mortgage, transfer, forced } = selectMortgage(reg, hwp);
+  // 등록번호 앞 6자리는 두 문서 모두에 번호가 있을 때만 대조한다(DESIGN §4.2). 근저당권을 고르지 못해
+  // 등기부 쪽 번호가 없으면 강제 결과도 넣지 않는다. 요약 판정에는 영향 없음 (CHECK 8번)
+  for (const k of OPTIONAL_FIELD_KEYS) forced.delete(k);
+  // 등기부에서 부동산 표시(집합건물 표제부)를 하나도 찾지 못하면 "등기부등본에 없음"(불일치)으로 단정하지 않는다.
+  // 토지·일반건물 등기부는 표제부 모양이 달라 아직 자동으로 읽지 않는다 (CHECK 9번)
+  if (reg.properties.length === 0) {
+    for (const k of PROPERTY_KEYS) forced.set(k, { status: "needs_review", reason: "등기부등본에서 집합건물 표제부를 찾지 못했습니다. 토지·일반건물 등기부는 부동산 표시를 자동으로 대조하지 않으니 직접 확인해 주세요." });
+  }
   const results = compareDocuments(hwp, registryToFields(reg, mortgage, transfer));
 
   if (forced.size === 0) return results;

@@ -111,9 +111,11 @@ describe("verifyCase: 1단계 원 접수번호로 근저당권 찾기", () => {
 describe("verifyCase: 2단계 이전 접수번호로 부기등기 찾기", () => {
   it("근저당권이전 기록이 없으면 이전 접수번호·양수인·이전 등기날짜 모두 불일치", () => {
     const rs = verifyCase(hwp(), reg([mortgage({ transfers: [] })]));
-    for (const k of ["assignee", "assigneeIdFront", "transferReceiptNumber", "transferRegistrationDate"]) {
+    for (const k of ["assignee", "transferReceiptNumber", "transferRegistrationDate"]) {
       expect(status(rs, k), k).toEqual(["mismatch"]);
     }
+    // 등록번호 앞 6자리는 등기부 쪽 번호가 없으므로 대조하지 않는다 (CHECK 8번)
+    expect(status(rs, "assigneeIdFront")).toEqual([]);
     expect(summarizeCase(rs)).toBe("mismatch_found");
   });
 
@@ -144,5 +146,22 @@ describe("verifyCase: 2단계 이전 접수번호로 부기등기 찾기", () =>
     const m = mortgage({ maxClaimAmount: o("금 120,000,000원", true) });
     const rs = verifyCase(hwp(), reg([m]));
     expect(status(rs, "maxClaimAmount")).toEqual(["needs_review"]);
+  });
+});
+
+describe("등록번호 앞 6자리 (CHECK 8번)", () => {
+  it("근저당권을 고르지 못하면 등록번호 앞 6자리는 결과에 넣지 않는다", () => {
+    const rs = verifyCase(hwp(), reg([]));
+    expect(rs.some((r) => r.key === "mortgageeIdFront" || r.key === "assigneeIdFront")).toBe(false);
+  });
+});
+
+describe("집합건물이 아닌 등기부 (CHECK 9번)", () => {
+  it("등기부에서 부동산 표시를 못 찾으면 부동산 항목은 「불일치」가 아니라 「확인 필요」", () => {
+    const rs = verifyCase(hwp(), { ...reg([mortgage()]), properties: [] });
+    for (const k of ["location", "lotNumber", "unitNumber", "area"]) {
+      expect(status(rs, k), k).toEqual(["needs_review"]);
+    }
+    expect(summarizeCase(rs)).toBe("needs_review");
   });
 });

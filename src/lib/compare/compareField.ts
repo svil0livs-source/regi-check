@@ -10,9 +10,12 @@ import {
 } from "@/types/verification";
 import {
   normalizeAmount,
+  normalizeArea,
   normalizeIdFront,
+  normalizeLotNumber,
   normalizeReceiptNumber,
   normalizeText,
+  normalizeUnitNumber,
   parseDate,
 } from "./normalize";
 
@@ -32,11 +35,18 @@ export function toComparable(kind: CompareKind, raw: string): string | null {
       const parts = parseDate(raw);
       return parts ? `${parts.year}-${parts.month}-${parts.day}` : null;
     }
-    case "text": {
+    case "text":
+    case "lotNumber":
+    case "unitNumber":
+    case "area": {
       // 지번·건물 호수·면적은 원래 빈칸일 수 있다 (예: 토지는 건물 호수가 없음).
       // 원문이 빈칸이면 "빈 값"으로 비교한다: 양쪽 다 빈칸이면 일치, 한쪽만 빈칸이면 불일치.
       if (raw.trim() === "") return "";
-      const text = normalizeText(raw);
+      const text =
+        kind === "lotNumber" ? normalizeLotNumber(raw)
+        : kind === "unitNumber" ? normalizeUnitNumber(raw)
+        : kind === "area" ? normalizeArea(raw)
+        : normalizeText(raw);
       // 글자가 있었는데 정규화 후 비었다면(예: 한자로만 적힘) 확신할 수 없다.
       return text.length > 0 ? text : null;
     }

@@ -85,7 +85,13 @@ export function readHwpParagraphs(file: Buffer | Uint8Array): string[] {
   for (let n = 0; ; n++) {
     const raw = entryBytes(container, `/BodyText/Section${n}`);
     if (!raw) break;
-    const data = compressed ? inflateRawSync(raw) : raw;
+    let data: Buffer;
+    try {
+      data = compressed ? inflateRawSync(raw) : raw;
+    } catch {
+      // 압축이 깨진 파일: "알 수 없는 오류" 대신 이유를 알린다 (CHECK 15번)
+      throw new HwpReadError("한글 파일 본문이 손상돼 읽을 수 없습니다. 한글에서 다시 저장해 올려 주세요.");
+    }
     paras.push(...readSection(data));
   }
   if (n0(paras)) throw new HwpReadError("한글 파일에서 본문을 찾지 못했습니다.");

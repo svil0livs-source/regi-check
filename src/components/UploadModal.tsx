@@ -57,7 +57,7 @@ export default function UploadModal({ open, dragging, onClose, onBrowse }: Props
               <X size={20} />
             </button>
             <h2 className="mb-1 font-serif text-3xl font-normal">폴더 올리기</h2>
-            <p className="mb-6 break-keep text-sm text-white/70">건별 폴더(한글 .hwp 1개 + 등기부등본 PDF 1개)를 여러 개 한꺼번에 올릴 수 있습니다.</p>
+            <p className="mb-6 break-keep text-sm text-white/70">건별 폴더(한글 파일 1개 + 등기부등본 PDF 1개)를 여러 개 한꺼번에 올릴 수 있습니다.</p>
 
             <div
               className={`flex flex-col items-center justify-center gap-5 rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors duration-200 ${

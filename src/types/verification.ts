@@ -35,7 +35,10 @@ export type FieldKey =
 export type CompareKind =
   | "name" // 이름: 한 글자라도 다르면 불일치
   | "address" // 주소: 한 글자라도 다르면 불일치
-  | "text" // 그 밖의 글자 (지번, 호수, 면적)
+  | "text" // 그 밖의 글자
+  | "lotNumber" // 지번: "123-4" = "123번지4" = "123번지의4" (표기만 다르면 일치, 2026-11-05 사용자 결정)
+  | "unitNumber" // 건물 호수: "제201호" = "201호"
+  | "area" // 면적: "59.82㎡" = "59.82제곱미터" = "59.82m²" = "59.820㎡"
   | "amount" // 금액: 숫자 한 자리라도 다르면 불일치
   | "receiptNumber" // 접수번호: 숫자 한 자리라도 다르면 불일치
   | "date" // 날짜: 연·월·일 중 하나라도 다르면 불일치
@@ -51,9 +54,9 @@ export const FIELD_DEFINITIONS: Record<
   debtor: { group: "parties", kind: "name" },
   owner: { group: "parties", kind: "name" },
   location: { group: "property", kind: "address" },
-  lotNumber: { group: "property", kind: "text" },
-  unitNumber: { group: "property", kind: "text" },
-  area: { group: "property", kind: "text" },
+  lotNumber: { group: "property", kind: "lotNumber" },
+  unitNumber: { group: "property", kind: "unitNumber" },
+  area: { group: "property", kind: "area" },
   maxClaimAmount: { group: "maxClaimAmount", kind: "amount" },
   receiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
   transferReceiptNumber: { group: "receiptNumber", kind: "receiptNumber" },

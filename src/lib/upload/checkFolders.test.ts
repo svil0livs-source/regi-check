@@ -44,9 +44,12 @@ describe("checkFolders", () => {
     expect(r.cases[0].ok).toBe(true);
   });
 
-  it(".hwpx는 아직 지원하지 않는다고 알려 준다", () => {
+  it(".hwpx(신버전 한글)도 받고, .hwp와 함께 있으면 한글 파일 2개로 본다", () => {
     const r = checkFolders([f("A/a.hwpx"), f("A/a.pdf")]);
-    expect(r.cases[0].reasons).toContain("한글 파일이 .hwpx 형식임 (.hwp만 지원)");
+    expect(r.cases[0].ok).toBe(true);
+    expect(r.cases[0].hwpPath).toBe("A/a.hwpx");
+    const two = checkFolders([f("B/a.hwpx"), f("B/a.hwp"), f("B/a.pdf")]);
+    expect(two.cases[0].reasons).toContain("한글 파일이 2개");
   });
 
   it("한 건의 두 파일 합계가 4.3MB를 넘으면 문제 (배포본 요청 한도)", () => {

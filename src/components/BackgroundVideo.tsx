@@ -17,6 +17,8 @@ export default function BackgroundVideo() {
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    // 「움직임 줄이기」를 켠 사용자에게는 영상을 불러오지 않는다. 화면은 CSS(motion-reduce)가 정지된 대체 배경으로 바꾼다 (CHECK 17번)
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     let hls: Hls | null = null;
     let cancelled = false;
 
@@ -88,7 +90,7 @@ export default function BackgroundVideo() {
     <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black" aria-hidden="true">
       {/* 영상이 안 나올 때를 위한 은은한 대체 배경 (어두운 보라·남색 빛) */}
       <div
-        className={`absolute inset-0 transition-opacity duration-1000 ${failed ? "opacity-100" : "opacity-0"}`}
+        className={`absolute inset-0 transition-opacity duration-1000 ${failed ? "opacity-100" : "opacity-0"} motion-reduce:opacity-100`}
         style={{
           background:
             "radial-gradient(60% 50% at 70% 30%, rgba(120,80,255,0.35), transparent 70%), radial-gradient(50% 45% at 25% 70%, rgba(60,90,255,0.28), transparent 70%), #000",
@@ -96,7 +98,7 @@ export default function BackgroundVideo() {
       />
       <video
         ref={videoRef}
-        className="relative h-full w-full object-cover opacity-100"
+        className="relative h-full w-full object-cover opacity-100 motion-reduce:hidden"
         autoPlay
         muted
         loop
