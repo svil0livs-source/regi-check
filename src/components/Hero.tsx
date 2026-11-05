@@ -11,9 +11,11 @@ interface Props {
   blocking: string | null;
   onPick: () => void;
   onInfo: () => void;
+  /** 「이전 결과 보기」 */
+  onHistory: () => void;
 }
 
-export default function Hero({ dragging, storedCount, blocking, onPick, onInfo }: Props) {
+export default function Hero({ dragging, storedCount, blocking, onPick, onInfo, onHistory }: Props) {
   const reduce = useReducedMotion();
   const fade = (delay: number, y = 10) => ({
     initial: reduce ? false : { opacity: 0, y },
@@ -67,9 +69,14 @@ export default function Hero({ dragging, storedCount, blocking, onPick, onInfo }
         </motion.div>
 
         {storedCount > 0 && (
-          <motion.p {...fade(0.6, 6)} className="glass-pill max-w-md break-keep px-5 py-2.5 text-xs text-white/80">
-            이전에 끝난 결과 {storedCount}건이 남아 있습니다. 같은 폴더를 다시 고르면 끝난 건은 건너뛰고 이어서 처리합니다.
-          </motion.p>
+          <motion.div {...fade(0.6, 6)} className="glass-pill flex max-w-md flex-col items-center gap-1.5 px-5 py-3 text-xs text-white/80">
+            <p className="break-keep text-center">
+              이전에 끝난 결과 {storedCount}건이 남아 있습니다. 같은 폴더를 다시 고르면 끝난 건은 건너뛰고 이어서 처리합니다.
+            </p>
+            <button onClick={onHistory} className="rounded text-[13px] font-medium text-violet-200 hover:text-white hover:underline">
+              이전 결과 보기
+            </button>
+          </motion.div>
         )}
         {blocking && (
           <p role="alert" className="glass-pill max-w-md border border-red-300/30 px-5 py-2.5 text-xs text-red-200">

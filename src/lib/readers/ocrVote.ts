@@ -5,8 +5,20 @@
 
 import type { OcrValue, RegistryMortgage, RegistryRead, RegistryTransfer } from "./registryOcr";
 
-/** 다수결 비교용: 띄어쓰기만 무시하고 글자 그대로 비교 */
-const voteKey = (v: OcrValue) => (v.text === null ? "\u0000null" : v.text.replace(/\s+/g, ""));
+/**
+ * 다수결 비교용: 띄어쓰기·쉼표와 낱개 기호(', |, _ 등 스캔 얼룩이 글자로 읽힌 것)만 무시하고 글자·숫자·점·붙임표·㎡는 그대로 비교한다.
+ * 글자는 하나도 고치지 않는다. (예: "주식회사'차카타은행"과 "주식회사 차카타은행"은 같은 표기로 센다)
+ * 한자는 어차피 대조 전에 지워지므로 여기서도 글자로 세지 않는다.
+ */
+const voteKey = (v: OcrValue) => (v.text === null ? "\u0000null" : v.text.replace(/[^\p{Script=Hangul}\p{N}a-zA-Z.\-㎡]/gu, ""));
+
+/** 기호 같은 군더더기 글자 수 (적을수록 깨끗하게 읽힌 표기) */
+const strayCount = (text: string | null) => (text === null ? 0 : (text.match(/[^\p{L}\p{N}\s,.()㎡-]/gu) ?? []).length);
+
+/** 같은 표기로 센 읽기들 중 대표 하나: 불확실 표시 없는 것 → 군더더기 적은 것 → 먼저 읽은 것 */
+function representative(group: OcrValue[]): OcrValue {
+  return [...group].sort((a, b) => Number(a.uncertain) - Number(b.uncertain) || strayCount(a.text) - strayCount(b.text))[0];
+}
 
 /** 값 하나를 다수결로 정한다 */
 export function voteValue(values: OcrValue[]): OcrValue {
@@ -22,7 +34,7 @@ export function voteValue(values: OcrValue[]): OcrValue {
   const majority = best.length * 2 > n;
   const flagged = best.filter((v) => v.uncertain).length;
   return {
-    text: best[0].text,
+    text: representative(best).text,
     uncertain: !majority || flagged * 2 >= best.length,
   };
 }
