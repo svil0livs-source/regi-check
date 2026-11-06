@@ -333,13 +333,14 @@ window.paginate = (spec) => {
     document.querySelectorAll('tr[data-target="1"]').forEach((tr) => {
       const p = tr.closest('.page'); const pr = p.getBoundingClientRect();
       const r0 = tr.cells[0].getBoundingClientRect(); const r4 = tr.cells[4].getBoundingClientRect();
-      const x = r0.left - pr.left + r0.width / 2 - 6, y = r0.top - pr.top + 22;
+      // 실제 스캔본의 볼펜 자국: 인쇄 글자보다 옅은 회색(밝기 가운데값 약 155)이고, 숫자 둘레를 넉넉히 감싼다 (2026-11-06 실제 서류에서 잼)
+      const x = r0.left - pr.left + r0.width / 2, y = r0.top - pr.top + 18;
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'pen'); svg.setAttribute('width', 794); svg.setAttribute('height', 1123);
       const cx = r4.left - pr.left + r4.width - 30, cy = r4.top - pr.top + 16;
-      svg.innerHTML = '<path d="M ' + (x + 16) + ' ' + (y - 14) + ' C ' + (x - 12) + ' ' + (y - 20) + ', ' + (x - 22) + ' ' + (y + 6) + ', ' + (x - 6) + ' ' + (y + 16) +
-        ' C ' + (x + 8) + ' ' + (y + 24) + ', ' + (x + 26) + ' ' + (y + 12) + ', ' + (x + 22) + ' ' + (y - 6) + '" fill="none" stroke="#3a3a3a" stroke-width="1.3" stroke-linecap="round"/>' +
-        '<path d="M ' + cx + ' ' + (cy - 2) + ' l 5 9 l 10 -16" fill="none" stroke="#3a3a3a" stroke-width="1.2" stroke-linecap="round"/>';
+      svg.innerHTML = '<path d="M ' + (x + 14) + ' ' + (y - 22) + ' C ' + (x - 18) + ' ' + (y - 26) + ', ' + (x - 30) + ' ' + (y + 4) + ', ' + (x - 14) + ' ' + (y + 20) +
+        ' C ' + (x + 2) + ' ' + (y + 30) + ', ' + (x + 30) + ' ' + (y + 22) + ', ' + (x + 28) + ' ' + (y - 2) + '" fill="none" stroke="#9a9a9a" stroke-width="1.4" stroke-linecap="round"/>' +
+        '<path d="M ' + cx + ' ' + (cy - 2) + ' l 5 9 l 10 -16" fill="none" stroke="#9a9a9a" stroke-width="1.3" stroke-linecap="round"/>';
       p.appendChild(svg);
     });
   }
