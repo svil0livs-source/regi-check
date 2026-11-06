@@ -5,8 +5,8 @@ import "server-only";
 
 import { summarizeCase } from "@/lib/compare/summarize";
 import type { PageImageObject } from "@/lib/readers/pdfPages";
-import { RegistryReadError } from "@/lib/readers/registryOcr";
-import { readRegistryObjects } from "@/lib/readers/registryRead";
+import { RegistryReadError, type RegistryRead } from "@/lib/readers/registryOcr";
+import { combineReads, readRegistryObjects, readRegistryPass } from "@/lib/readers/registryRead";
 import type { CaseSummary, DocumentFields, FieldResult } from "@/types/verification";
 import { verifyCase } from "./verifyCase";
 
@@ -36,4 +36,26 @@ export async function processCase(
     console.error(`[verify] 처리 실패: ${(err as Error)?.name ?? "Error"}`);
     return fail("처리 중 알 수 없는 오류가 났습니다.");
   }
+}
+
+/** 읽기 한 번의 결과 (브라우저가 모았다가 대조 요청에 함께 보낸다) */
+export type PassOutcome = { ok: true; read: RegistryRead; total: number } | { ok: false; outcome: CaseOutcome };
+
+/** 등기부를 index번째 설정으로 한 번만 읽는다 (2026-11-06: 요청마다 300초 한도 안에 끝나도록 나눔) */
+export async function readCasePass(folder: string, images: PageImageObject[], index: number, signal?: AbortSignal): Promise<PassOutcome> {
+  const fail = (error: string): PassOutcome => ({ ok: false, outcome: { folder, summary: "processing_failed", results: [], error } });
+  try {
+    return { ok: true, ...(await readRegistryPass(images, index, signal)) };
+  } catch (err) {
+    if (err instanceof RegistryReadError) return fail(err.message);
+    if ((err as Error)?.name === "AbortError") return fail("처리가 취소됐습니다.");
+    console.error(`[verify] 읽기 실패: ${(err as Error)?.name ?? "Error"}`);
+    return fail("처리 중 알 수 없는 오류가 났습니다.");
+  }
+}
+
+/** 모은 읽기 결과를 다수결로 합쳐 한글 서류 값과 대조한다 */
+export function compareCase(folder: string, hwp: DocumentFields, reads: RegistryRead[]): CaseOutcome {
+  const results = verifyCase(hwp, combineReads(reads));
+  return { folder, summary: summarizeCase(results), results };
 }
