@@ -78,7 +78,51 @@ export async function readRegistryObjects(objects: PageImageObject[], signal?: A
   return voteRegistryReads(reads);
 }
 
+/**
+ * 2026-11-06: 오래 걸려도 끝까지 처리하도록, 브라우저가 읽기 설정 하나씩 따로 요청한다(요청마다 서버 한도 300초).
+ * index번째 설정으로 한 번 읽어 대조 항목 값만 돌려준다(읽은 원문은 돌려주지 않음). total은 전체 읽기 횟수.
+ */
+export async function readRegistryPass(
+  objects: PageImageObject[],
+  index: number,
+  signal?: AbortSignal,
+): Promise<{ read: RegistryRead; total: number }> {
+  let pages: Buffer[];
+  try {
+    pages = await decodePageImages(objects);
+  } catch (err) {
+    if (err instanceof PdfImageError) throw new RegistryReadError(err.message);
+    throw err;
+  }
+  if (pages.length === 0) {
+    throw new RegistryReadError("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
+  }
+  // OpenAI는 한 요청 안에서 여러 번 읽어 다수결까지 한다
+  if ((process.env.OCR_ENGINE ?? "tesseract") === "openai") return { read: await readRegistryImages(pages, signal), total: 1 };
+  const opts = READS[index];
+  if (!opts) throw new RegistryReadError("읽기 순서가 올바르지 않습니다.");
+  const confMin = Number(process.env.OCR_CONF_MIN) || DEFAULT_CONF_MIN;
+  const started = Date.now();
+  const lines = [];
+  for (const page of pages) {
+    if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
+    if (Date.now() - started > PASS_BUDGET_MS) {
+      throw new RegistryReadError(
+        `등기부등본 페이지(${pages.length}쪽)가 많아 한 번 읽기에 서버 한도(300초)를 넘었습니다. 필요한 페이지만 담은 PDF로 다시 올려 주세요.`,
+      );
+    }
+    lines.push(...(await recognizePage(page, opts, signal)));
+  }
+  return { read: parseRegistryLines(lines, confMin), total: READS.length };
+}
+
+/** 따로 읽은 결과들을 값마다 다수결로 합친다 */
+export const combineReads = (reads: RegistryRead[]): RegistryRead => voteRegistryReads(reads);
+
+/** 한 번 읽기 시간 예산 (서버 한도 300초 중 응답 몫을 남김) */
+const PASS_BUDGET_MS = 280_000;
+
 /** 읽기 시간 예산 (서버 한도 300초 중 한글 파일 읽기·대조·응답 몫을 남김) */
 const TIME_BUDGET_MS = 230_000;
 /** 다수결에 쓸 최소 읽기 횟수 */
-const MIN_READS = 3;
+export const MIN_READS = 3;

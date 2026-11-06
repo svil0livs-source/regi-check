@@ -28,6 +28,8 @@ type Row = {
   state: "waiting" | "running" | "done";
   outcome?: CaseOutcome;
   resumed?: boolean;
+  /** 읽는 중일 때 진행 (예: "2/5") */
+  progress?: string;
 };
 
 const SUMMARY_STYLE: Record<CaseSummary, string> = {
@@ -53,7 +55,7 @@ const STATUS_STYLE: Record<FieldStatus, string> = {
 const STATUS_ORDER: Record<FieldStatus, number> = { mismatch: 0, needs_review: 1, unreadable: 2, match: 3 };
 
 /** JSON 응답이 없는 서버 오류의 화면 문구 (다시 시도해도 같은 이유로 실패하는 경우는 그렇게 알린다) */
-/** 한 건 요청을 기다리는 최대 시간 (서버 한도 300초 + 여유) */
+/** 요청 하나(읽기 한 번)를 기다리는 최대 시간 (서버 한도 300초 + 여유) */
 const REQUEST_TIMEOUT_MS = 330_000;
 
 function httpErrorMessage(status: number): string {
@@ -62,6 +64,45 @@ function httpErrorMessage(status: number): string {
   if (status >= 500) return `서버 오류로 처리하지 못했습니다 (HTTP ${status}). 잠시 뒤 같은 폴더를 다시 고르면 이어서 처리합니다.`;
   return `처리하지 못했습니다 (HTTP ${status}).`;
 }
+
+/** 요청 하나를 보내고 JSON을 받는다. 서버 앞단 오류(413·504 등)는 화면 문구로 바꿔 던진다 */
+async function post<T>(folder: string, body: FormData, signal: AbortSignal): Promise<T> {
+  // 연결이 멈춰도 끝없이 기다리지 않게 요청마다 시간 한도를 둔다 (CHECK 11번)
+  const res = await fetch("/api/verify", { method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) });
+  const json = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!res.ok || !json) throw new PrepareFailed({ folder, summary: "processing_failed", results: [], error: json?.error ?? httpErrorMessage(res.status) });
+  return json;
+}
+
+type PassResponse = { ok: true; read: unknown; total: number } | { ok: false; outcome: CaseOutcome };
+
+/**
+ * 한 건 처리 (2026-11-06): 서버 한도(요청마다 300초)에 막히지 않도록 등기부 읽기를 한 번씩 따로 요청하고,
+ * 모은 결과(대조 항목 값만)를 마지막에 한글 서류 값과 함께 보내 대조한다. 오래 걸려도 끝까지 처리한다.
+ */
+async function runCase(folder: string, prepared: FormData, signal: AbortSignal, onProgress: (n: number, total: number) => void): Promise<CaseOutcome> {
+  const reads: unknown[] = [];
+  let total = 1;
+  for (let pass = 0; pass < total; pass++) {
+    onProgress(pass + 1, pass === 0 ? READ_PASSES_HINT : total);
+    const body = new FormData();
+    for (const [k, v] of prepared) if (k !== "fields") body.append(k, v);
+    body.set("step", "read");
+    body.set("pass", String(pass));
+    const r = await post<PassResponse>(folder, body, signal);
+    if (!r.ok) return r.outcome;
+    reads.push(r.read);
+    total = r.total;
+  }
+  const body = new FormData();
+  body.set("step", "compare");
+  body.set("folder", folder);
+  body.set("fields", String(prepared.get("fields")));
+  body.set("reads", JSON.stringify(reads));
+  return post<CaseOutcome>(folder, body, signal);
+}
+/** 첫 응답 전 진행 표시에 쓸 읽기 횟수 (Tesseract 기본 5번) */
+const READ_PASSES_HINT = 5;
 
 /** 브라우저에서 보낼 준비를 하다 멈춘 건 (서버에 보내지 않고 바로 결과로 쓴다) */
 class PrepareFailed extends Error {
@@ -161,16 +202,9 @@ export default function Verifier() {
           // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (파일당 6000KB까지 받기 위해, 2026-11-06)
           const prepared = await prepareCase(folder, files.get(hwpPath!)!, files.get(pdfPath!)!);
           if (!prepared.ok) throw new PrepareFailed({ folder, summary: prepared.summary, results: [], error: prepared.error });
-          const body = prepared.body;
-          // 서버 한도(300초)보다 조금 길게 기다린다. 연결이 멈춰도 끝없이 기다리지 않게 (CHECK 11번)
-          const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-          const res = await fetch("/api/verify", { method: "POST", body, signal: AbortSignal.any([ac.signal, timeout]) });
-          // 서버 앞단(Vercel)이 막으면 JSON이 아닌 오류가 온다(413 크기 초과, 504 시간 초과). 그때도 정확한 이유를 보여 준다.
-          const json = (await res.json().catch(() => null)) as (CaseOutcome & { error?: string }) | null;
-          outcome =
-            res.ok && json
-              ? json
-              : { folder, summary: "processing_failed", results: [], error: json?.error ?? httpErrorMessage(res.status) };
+          outcome = await runCase(folder, prepared.body, ac.signal, (n, total) =>
+            setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, progress: `${n}/${total}` } : r))),
+          );
         } catch (err) {
           if (err instanceof PrepareFailed) {
             outcome = err.outcome;
@@ -184,7 +218,7 @@ export default function Verifier() {
               summary: "processing_failed",
               results: [],
               error: timedOut
-                ? `${REQUEST_TIMEOUT_MS / 1000}초 안에 응답이 없어 멈췄습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.`
+                ? `읽기 한 번이 ${REQUEST_TIMEOUT_MS / 1000}초 안에 끝나지 않아 멈췄습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.`
                 : "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
             };
           }
@@ -408,7 +442,7 @@ export default function Verifier() {
                           <td className="px-4 py-3 font-mono text-white">{r.check.folder}</td>
                           <td className="px-4 py-3">
                             {r.state === "waiting" && <span className="text-white/50">대기</span>}
-                            {r.state === "running" && <span className="animate-pulse text-violet-200">읽는 중…</span>}
+                            {r.state === "running" && <span className="animate-pulse text-violet-200">읽는 중…{r.progress ? ` ${r.progress}` : ""}</span>}
                             {r.state === "done" && s && <Badge summary={s} />}
                           </td>
                           <td className="px-4 py-3 text-white/60">
