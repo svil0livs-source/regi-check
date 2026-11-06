@@ -40,7 +40,7 @@ describe("summarizeCase", () => {
   });
 
   it("읽지 못한 항목이 있으면 전부 일치가 아니라 확인 필요", () => {
-    expect(summarizeCase(results({ owner: "unreadable" }))).toBe("needs_review");
+    expect(summarizeCase(results({ debtor: "unreadable" }))).toBe("needs_review");
   });
 
   it("대조하지 않은 항목이 빠져 있으면 확인 필요", () => {

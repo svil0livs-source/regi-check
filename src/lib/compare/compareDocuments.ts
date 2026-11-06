@@ -234,24 +234,24 @@ export function compareProperties(
 
 // ── 건 전체 ────────────────────────────────────────────────────────
 
-/** 한글 서류와 등기부등본에서 읽은 값을 받아, 건 하나의 모든 항목 대조 결과를 만든다. */
+/**
+ * 한글 서류와 등기부등본에서 읽은 값을 받아, 건 하나의 모든 항목 대조 결과를 만든다.
+ * 이전할 근저당권은 같은 순서끼리 비교한다 (등기부 쪽은 verifyCase가 접수번호로 찾아 순서를 맞춘다).
+ */
 export function compareDocuments(hwp: DocumentFields, registry: DocumentFields): FieldResult[] {
+  const none = { value: null };
   return [
-    ...PARTY_ROLES.flatMap((role) =>
-      compareParties(role, hwp.parties[role], registry.parties[role]),
-    ),
+    ...PARTY_ROLES.flatMap((role) => compareParties(role, hwp.parties[role], registry.parties[role])),
     ...compareProperties(hwp.properties, registry.properties),
     compareField("maxClaimAmount", hwp.maxClaimAmount, registry.maxClaimAmount),
-    compareField("receiptNumber", hwp.receiptNumber, registry.receiptNumber),
-    compareField("transferReceiptNumber", hwp.transferReceiptNumber, registry.transferReceiptNumber),
-    compareField("registrationDate", hwp.registrationDate, registry.registrationDate),
-    compareField(
-      "transferRegistrationDate",
-      hwp.transferRegistrationDate,
-      registry.transferRegistrationDate,
-    ),
-    ...compareIdFront("mortgageeIdFront", hwp.mortgageeIdFront, registry.mortgageeIdFront),
-    ...compareIdFront("assigneeIdFront", hwp.assigneeIdFront, registry.assigneeIdFront),
+    ...hwp.mortgages.flatMap((m, i) => {
+      const r = registry.mortgages[i];
+      return (["receiptNumber", "registrationDate", "rank"] as const).map((k) => ({
+        ...compareField(k, m[k], r?.[k] ?? none),
+        index: i + 1,
+      }));
+    }),
+    ...compareIdFront(hwp.mortgageeIdFront, registry.mortgageeIdFront),
   ];
 }
 
@@ -259,11 +259,7 @@ export function compareDocuments(hwp: DocumentFields, registry: DocumentFields):
  * 등록번호 앞 6자리는 두 문서 모두에서 번호를 읽은 경우에만 대조한다 (PRD §5 must2, 2026-11-05 사용자 결정).
  * 한쪽에 번호가 없거나 읽지 못하면 이 항목은 대조하지 않는다(결과에 넣지 않음). 읽었지만 확신이 낮으면 compareField가 「확인 필요」로 둔다.
  */
-function compareIdFront(
-  key: "mortgageeIdFront" | "assigneeIdFront",
-  hwp: DocumentFields["mortgageeIdFront"],
-  registry: DocumentFields["mortgageeIdFront"],
-): FieldResult[] {
+function compareIdFront(hwp: DocumentFields["mortgageeIdFront"], registry: DocumentFields["mortgageeIdFront"]): FieldResult[] {
   const has = (v: DocumentFields["mortgageeIdFront"]) => !!v.value && v.value.trim() !== "";
-  return has(hwp) && has(registry) ? [compareField(key, hwp, registry)] : [];
+  return has(hwp) && has(registry) ? [compareField("mortgageeIdFront", hwp, registry)] : [];
 }

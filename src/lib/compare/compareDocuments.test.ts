@@ -17,12 +17,12 @@ const prop = (location: string, lotNumber: string, unitNumber: string, area: str
 
 describe("compareParties: 여러 명", () => {
   it("순서만 다르면 모두 일치", () => {
-    const r = compareParties("owner", names("홍길동", "김철수"), names("김철수", "홍길동"));
+    const r = compareParties("debtor", names("홍길동", "김철수"), names("김철수", "홍길동"));
     expect(statuses(r)).toEqual(["match", "match"]);
   });
 
   it("한 명 이름이 틀리면 그 사람만 불일치", () => {
-    const r = compareParties("owner", names("홍길동", "김철수"), names("김철수", "홍길돈"));
+    const r = compareParties("debtor", names("홍길동", "김철수"), names("김철수", "홍길돈"));
     expect(statuses(r)).toEqual(["match", "mismatch"]);
     expect(r[1].hwpValue).toBe("홍길동");
     expect(r[1].registryValue).toBe("홍길돈");
@@ -42,27 +42,27 @@ describe("compareParties: 여러 명", () => {
   });
 
   it("남은 수가 다르고 이름도 틀리면 남은 사람 모두 불일치", () => {
-    const r = compareParties("owner", names("홍길동"), names("홍길돈", "김철수"));
+    const r = compareParties("debtor", names("홍길동"), names("홍길돈", "김철수"));
     expect(statuses(r)).toEqual(["mismatch", "mismatch"]);
   });
 
   it("같은 이름이 한쪽에 2번 있으면 역할 전체 확인 필요", () => {
-    const r = compareParties("owner", names("홍길동", "홍길동"), names("홍길동", "김철수"));
+    const r = compareParties("debtor", names("홍길동", "홍길동"), names("홍길동", "김철수"));
     expect(statuses(r)).toEqual(["needs_review", "needs_review"]);
   });
 
   it("확신 낮은 이름이 하나라도 있으면 역할 전체 확인 필요 (값이 같아 보여도)", () => {
-    const r = compareParties("owner", names("홍길동", "김철수"), [v("홍길동"), v("김철수", true)]);
+    const r = compareParties("debtor", names("홍길동", "김철수"), [v("홍길동"), v("김철수", true)]);
     expect(statuses(r)).toEqual(["needs_review", "needs_review"]);
   });
 
   it("읽지 못한 이름은 읽지 못함, 나머지는 확인 필요", () => {
-    const r = compareParties("owner", names("홍길동", "김철수"), [v("홍길동"), v(null)]);
+    const r = compareParties("debtor", names("홍길동", "김철수"), [v("홍길동"), v(null)]);
     expect(statuses(r)).toEqual(["needs_review", "unreadable"]);
   });
 
   it("한자로만 적힌 이름은 짝을 지을 수 없어 확인 필요", () => {
-    const r = compareParties("owner", names("홍길동", "김철수"), names("洪吉童", "김철수"));
+    const r = compareParties("debtor", names("홍길동", "김철수"), names("洪吉童", "김철수"));
     expect(statuses(r)).toEqual(["needs_review", "needs_review"]);
   });
 
@@ -72,11 +72,11 @@ describe("compareParties: 여러 명", () => {
   });
 
   it("양쪽 다 비어 있으면 결과 없음 (요약에서 확인 필요가 됨)", () => {
-    expect(compareParties("assignee", [], [])).toEqual([]);
+    expect(compareParties("mortgagee", [], [])).toEqual([]);
   });
 
   it("번호(index)를 1부터 붙인다", () => {
-    const r = compareParties("owner", names("홍길동", "김철수"), names("홍길동", "김철수"));
+    const r = compareParties("debtor", names("홍길동", "김철수"), names("홍길동", "김철수"));
     expect(r.map((x) => x.index)).toEqual([1, 2]);
   });
 });
@@ -138,160 +138,62 @@ describe("compareProperties: 여러 개", () => {
   });
 });
 
-describe("compareDocuments + summarizeCase: 건 전체", () => {
+describe("compareDocuments + summarizeCase: 건 전체 (2026-11-06 양도증서 기준)", () => {
+  const m = (receipt: string, date: string, rank: string) => ({ receiptNumber: v(receipt), registrationDate: v(date), rank: v(rank) });
   const base = (): DocumentFields => ({
-    parties: {
-      mortgagee: names("한국은행"),
-      assignee: names("대한은행"),
-      debtor: names("홍길동", "김철수"),
-      owner: names("홍길동", "김철수"),
-    },
-    properties: [prop("서울특별시 강남구 역삼동", "123-4", "101동 1001호", "84.97㎡")],
-    maxClaimAmount: v("금 120,000,000원"),
-    receiptNumber: v("제12345호"),
-    transferReceiptNumber: v("제67890호"),
-    registrationDate: v("2020년 3월 2일"),
-    transferRegistrationDate: v("2026년 11월 4일"),
+    parties: { mortgagee: names("삼성화재해상보험주식회사"), debtor: names("홍길동") },
+    properties: [prop("경기도 성남시 분당구 서현동", "255-1", "제8층 제씨-809호", "80㎡")],
+    mortgages: [m("제14475호", "2020년03월13일", "3"), m("제2943호", "2022년01월19일", "4")],
+    maxClaimAmount: v("금 504,000,000원"),
     mortgageeIdFront: v("110111"),
-    assigneeIdFront: v("110222"),
   });
 
-  it("원 등기날짜와 이전 등기날짜를 둘 다 대조한다", () => {
-    const results = compareDocuments(base(), base());
-    expect(results.map((r) => r.key)).toEqual(
-      expect.arrayContaining(["registrationDate", "transferRegistrationDate"]),
-    );
-    expect(results.length).toBeGreaterThanOrEqual(13);
+  it("모두 같으면 전부 일치", () => {
+    expect(summarizeCase(compareDocuments(base(), base()))).toBe("all_match");
   });
 
-  it("등록번호 앞 6자리를 두 개(근저당권자·양수인) 대조한다", () => {
-    const results = compareDocuments(base(), base());
-    expect(results.map((r) => r.key)).toEqual(expect.arrayContaining(["mortgageeIdFront", "assigneeIdFront"]));
-    expect(summarizeCase(results)).toBe("all_match");
+  it("근저당권마다 접수번호·접수일·순위를 대조한다", () => {
+    const keys = compareDocuments(base(), base()).filter((r) => r.group === "mortgage").map((r) => `${r.key}${r.index}`);
+    expect(keys.sort()).toEqual(["rank1", "rank2", "receiptNumber1", "receiptNumber2", "registrationDate1", "registrationDate2"]);
   });
 
-  it("양수인 등록번호 앞자리가 한 자리 다르면 불일치 있음", () => {
+  it("두 번째 근저당권 순위만 틀려도 불일치 있음", () => {
     const hwp = base();
-    hwp.assigneeIdFront = v("110223");
-    const results = compareDocuments(hwp, base());
-    expect(results.find((r) => r.key === "assigneeIdFront")?.status).toBe("mismatch");
-    expect(summarizeCase(results)).toBe("mismatch_found");
+    hwp.mortgages[1].rank = v("5");
+    const r = compareDocuments(hwp, base());
+    expect(r.find((x) => x.key === "rank" && x.index === 2)?.status).toBe("mismatch");
+    expect(summarizeCase(r)).toBe("mismatch_found");
   });
 
-  it("등기부에 등록번호가 없거나 읽지 못하면 그 항목은 대조하지 않는다 (나머지가 맞으면 전부 일치)", () => {
+  it("접수일이 하루 틀려도 불일치 있음", () => {
+    const hwp = base();
+    hwp.mortgages[0].registrationDate = v("2020년03월14일");
+    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
+  });
+
+  it("양도인 등록번호 앞자리가 한 자리 다르면 불일치 있음", () => {
+    const hwp = base();
+    hwp.mortgageeIdFront = v("110112");
+    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
+  });
+
+  it("등기부에 등록번호가 없으면 그 항목은 대조하지 않는다", () => {
     const registry = base();
     registry.mortgageeIdFront = v(null);
-    const results = compareDocuments(base(), registry);
-    expect(results.some((r) => r.key === "mortgageeIdFront")).toBe(false);
-    expect(results.some((r) => r.key === "assigneeIdFront")).toBe(true);
-    expect(summarizeCase(results)).toBe("all_match");
-  });
-
-  it("신청서에 등록번호가 없어도 그 항목은 대조하지 않는다", () => {
-    const hwp = base();
-    hwp.assigneeIdFront = v(null);
-    const results = compareDocuments(hwp, base());
-    expect(results.some((r) => r.key === "assigneeIdFront")).toBe(false);
-    expect(summarizeCase(results)).toBe("all_match");
-  });
-
-  it("두 문서 모두 등록번호를 읽었지만 등기부 쪽 확신이 낮으면 확인 필요", () => {
-    const registry = base();
-    registry.mortgageeIdFront = { value: registry.mortgageeIdFront.value, lowConfidence: true };
-    expect(summarizeCase(compareDocuments(base(), registry))).toBe("needs_review");
-  });
-
-  it("이전 등기날짜만 하루 틀려도 불일치 있음", () => {
-    const hwp = base();
-    hwp.transferRegistrationDate = v("2026년 11월 5일");
-    const results = compareDocuments(hwp, base());
-    expect(results.find((r) => r.key === "transferRegistrationDate")?.status).toBe("mismatch");
-    expect(results.find((r) => r.key === "registrationDate")?.status).toBe("match");
-    expect(summarizeCase(results)).toBe("mismatch_found");
-  });
-
-  it("원 등기날짜만 틀려도 불일치 있음", () => {
-    const hwp = base();
-    hwp.registrationDate = v("2021년 3월 2일");
-    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
-  });
-
-  it("두 등기날짜를 서로 바꿔 적으면 둘 다 불일치", () => {
-    const hwp = base();
-    hwp.registrationDate = v("2026년 11월 4일");
-    hwp.transferRegistrationDate = v("2020년 3월 2일");
-    const results = compareDocuments(hwp, base());
-    expect(results.find((r) => r.key === "registrationDate")?.status).toBe("mismatch");
-    expect(results.find((r) => r.key === "transferRegistrationDate")?.status).toBe("mismatch");
-  });
-
-  it("이전 등기날짜를 읽지 못하면 확인 필요", () => {
-    const registry = base();
-    registry.transferRegistrationDate = v(null);
-    expect(summarizeCase(compareDocuments(base(), registry))).toBe("needs_review");
-  });
-
-  it("원 접수번호와 이전 접수번호를 둘 다 대조한다", () => {
-    const results = compareDocuments(base(), base());
-    expect(results.map((r) => r.key)).toEqual(
-      expect.arrayContaining(["receiptNumber", "transferReceiptNumber"]),
-    );
-    expect(summarizeCase(results)).toBe("all_match");
-  });
-
-  it("원 접수번호는 맞고 이전 접수번호만 틀려도 불일치 있음", () => {
-    const hwp = base();
-    hwp.transferReceiptNumber = v("제67891호");
-    const results = compareDocuments(hwp, base());
-    expect(results.find((r) => r.key === "transferReceiptNumber")?.status).toBe("mismatch");
-    expect(results.find((r) => r.key === "receiptNumber")?.status).toBe("match");
-    expect(summarizeCase(results)).toBe("mismatch_found");
-  });
-
-  it("이전 접수번호만 맞고 원 접수번호가 틀려도 불일치 있음", () => {
-    const hwp = base();
-    hwp.receiptNumber = v("제12346호");
-    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
-  });
-
-  it("두 접수번호를 서로 바꿔 적으면 둘 다 불일치", () => {
-    const hwp = base();
-    hwp.receiptNumber = v("제67890호");
-    hwp.transferReceiptNumber = v("제12345호");
-    const results = compareDocuments(hwp, base());
-    expect(results.find((r) => r.key === "receiptNumber")?.status).toBe("mismatch");
-    expect(results.find((r) => r.key === "transferReceiptNumber")?.status).toBe("mismatch");
-  });
-
-  it("이전 접수번호를 읽지 못하면 전부 일치가 아니라 확인 필요", () => {
-    const registry = base();
-    registry.transferReceiptNumber = v(null);
-    expect(summarizeCase(compareDocuments(base(), registry))).toBe("needs_review");
-  });
-
-  it("공동 소유자 순서만 다르면 전부 일치", () => {
-    const registry = base();
-    registry.parties.owner = names("김철수", "홍길동");
-    expect(summarizeCase(compareDocuments(base(), registry))).toBe("all_match");
+    const r = compareDocuments(base(), registry);
+    expect(r.some((x) => x.key === "mortgageeIdFront")).toBe(false);
+    expect(summarizeCase(r)).toBe("all_match");
   });
 
   it("공동 채무자 한 명이 빠지면 불일치 있음", () => {
-    const hwp = base();
-    hwp.parties.debtor = names("홍길동");
-    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
-  });
-
-  it("양수인이 등기부에 없으면 (양쪽 비교 불가) 불일치 있음", () => {
     const registry = base();
-    registry.parties.assignee = [];
+    registry.parties.debtor = names("홍길동", "김철수");
     expect(summarizeCase(compareDocuments(base(), registry))).toBe("mismatch_found");
   });
 
-  it("양쪽 모두 양수인이 없으면 대조하지 못한 항목이 있어 확인 필요", () => {
+  it("채권최고액이 다르면 불일치 있음", () => {
     const hwp = base();
-    const registry = base();
-    hwp.parties.assignee = [];
-    registry.parties.assignee = [];
-    expect(summarizeCase(compareDocuments(hwp, registry))).toBe("needs_review");
+    hwp.maxClaimAmount = v("금 504,000,001원");
+    expect(summarizeCase(compareDocuments(hwp, base()))).toBe("mismatch_found");
   });
 });

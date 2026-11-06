@@ -13,15 +13,15 @@ describe("compareField: 이름·주소", () => {
   });
 
   it("한자 병기만 다르면 일치 (한자는 검사하지 않음)", () => {
-    expect(compareField("owner", v("홍길동(洪吉童)"), v("홍길동")).status).toBe("match");
+    expect(compareField("debtor", v("홍길동(洪吉童)"), v("홍길동")).status).toBe("match");
   });
 
   it("한자를 빼고 남은 한글이 다르면 불일치", () => {
-    expect(compareField("owner", v("홍길동(洪吉童)"), v("홍길돈")).status).toBe("mismatch");
+    expect(compareField("debtor", v("홍길동(洪吉童)"), v("홍길돈")).status).toBe("mismatch");
   });
 
   it("한자로만 적힌 이름은 비교할 수 없어 확인 필요", () => {
-    expect(compareField("owner", v("洪吉童"), v("홍길동")).status).toBe("needs_review");
+    expect(compareField("debtor", v("洪吉童"), v("홍길동")).status).toBe("needs_review");
   });
 
   it("띄어쓰기만 다르면 일치", () => {
@@ -41,7 +41,7 @@ describe("compareField: 빈칸", () => {
   });
 
   it("이름이 빈칸이면 확인 필요", () => {
-    expect(compareField("owner", v(""), v("")).status).toBe("needs_review");
+    expect(compareField("debtor", v(""), v("")).status).toBe("needs_review");
   });
 
   it("호수가 한자로만 적혀 비면 확인 필요", () => {
@@ -110,17 +110,17 @@ describe("compareField: 등기날짜", () => {
 
 describe("compareField: 읽지 못함·확신 낮음", () => {
   it("어느 한쪽이라도 읽지 못하면 읽지 못함", () => {
-    const result = compareField("owner", v(null), v("홍길동"));
+    const result = compareField("debtor", v(null), v("홍길동"));
     expect(result.status).toBe("unreadable");
     expect(result.reason).toContain("한글 서류");
   });
 
   it("확신이 낮으면 값이 같아도 일치가 아니라 확인 필요", () => {
-    expect(compareField("owner", v("홍길동"), v("홍길동", true)).status).toBe("needs_review");
+    expect(compareField("debtor", v("홍길동"), v("홍길동", true)).status).toBe("needs_review");
   });
 
   it("확신이 낮으면 값이 달라도 확인 필요 (낮은 확신 값은 그대로 쓰지 않음)", () => {
-    expect(compareField("owner", v("홍길동"), v("홍길돈", true)).status).toBe("needs_review");
+    expect(compareField("debtor", v("홍길동"), v("홍길돈", true)).status).toBe("needs_review");
   });
 
   it("두 문서 값을 결과에 그대로 담는다 (상세 화면용)", () => {

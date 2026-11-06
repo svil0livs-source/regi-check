@@ -1,187 +1,74 @@
-// 한글 신청서 읽기 시험.
-// 1) 글자 묶음에서 항목 뽑기 (서류 없이)
-// 2) 시험용 가짜 서류 20건을 실제로 읽어 cases.json의 값과 같은지 (서류가 있을 때만)
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+// 한글 서류 읽기 시험 (2026-11-06 실제 양식: 위임장 + 확정채권 및 근저당권 양도증서).
+// 글자 순서는 사용자가 준 양식 파일에서 꺼낸 그대로이고, 값만 가짜로 바꿨다.
 import { describe, expect, it } from "vitest";
 import { compareDocuments } from "@/lib/compare/compareDocuments";
 import { extractHwpFields } from "./hwpFields";
 import { HwpReadError, readHwpParagraphs } from "./hwpText";
 
-// 사용자가 준 신청서 양식(2026-11-05)을 이전등기에 맞춘 모양. 한글 파일에서 꺼낸 글자 순서 그대로.
-const sample = [
-  "근저당권이전등기신청",
-  "접 수",
-  "2026년 7월 19일",
-  "처리인",
-  "접 수",
-  "기 입",
-  "교 합",
-  "각종 통지",
-  "제71426호",
-  "① 부동산의 표시",
-  "1동의 건물의 표시",
-  "서울특별시 마포구 공덕동 45-6 시험빌라 가동",
-  "[도로명주소] 서울특별시 마포구 시험길 8",
-  "전유부분의 건물의 표시",
-  "건물의 번호 제2층 제201호",
-  "구 조 철근콘크리트조",
-  "면 적 2층 201호 59.82㎡",
-  "대지권의 표시",
-  "토지의 표시 1. 서울특별시 마포구 공덕동 45-6 대 860㎡",
-  "대지권의 종류 소유권",
-  "대지권의 비율 860분의 41.2",
-  "이 상",
-  "② 등기원인과 그 연월일",
-  "2026년 7월 19일 확정채권양도",
-  "③ 등기의 목적",
-  "근저당권이전",
-  "④ 이전할 근저당권",
-  "2021년 7월 4일 접수 제57514호로 등기한 순위 제1번 근저당권",
-  "채권최고액 금 322,000,000원",
-  "채무자 조모의, 김가명",
-  "근저당권설정자(소유자) 조모의",
-  "구분",
-  "성 명 (상호·명칭)",
-  "주민등록번호 (등기용등록번호)",
-  "주 소 (소재지)",
-  "⑤ 등기의무자",
-  "주식회사 사아자캐피탈",
-  "근저당권자(양도인)",
-  "110111-1087115",
-  "서울특별시 종로구 가상길 5",
-  "⑥ 등기권리자",
-  "주식회사 러머버대부",
-  "근저당권 양수인",
-  "110111-1079196",
-  "서울특별시 서초구 시험대로 10",
-  "⑦ 등록면허세",
-  "금 6,000원",
+const sample = (mortgageLine: string) => [
+  "", "위        임        장", "부", "동", "산", "의", "표", "시",
+  "  1. 1동의 건물의 표시", "",
+  "   경기도 시험시 가상구 나라동 255-1", "   시험오피스텔", "   [도로명주소]경기도 시험시 가상구 나라로 170", "",
+  " 전유부분의 건물의 표시",
+  "  1. 건물의 번호 : 제8층 제씨-809호[고유번호:1111-2004-000000]",
+  "      구조 및 면적 : 철근콘크리트구조 80㎡",
+  "    전유부분의 대지권의 표시", "      토지의 표시", "       1.경기도 시험시 가상구 나라동 255-1", "           대  18523.4㎡",
+  "          대지권의 종류: 소유권", "          대지권의 비율: 18523.4분의 11.535",
+  " 등기원인과 그연월일", "    2026년 10월 29일   확정채권양도",
+  "등  기  의   목  적", "  근저당권 이전",
+  "   이 전 할 근 저 당 권", mortgageLine, "  (채권최고액 : 금 504,000,000원)",
+  "채권 양도인", "          가나다보험주식회사     (110111-1234567)", "          서울특별시 서초구 가상대로 1", "          (대표이사)이가명",
+  "채권 양수인", "           한국자산관리공사           (114671-0023169)", "           부산광역시 남구 문현금융로 40(문현동)",
+  "확정채권 및 근저당권 양도증서",
+  "【부동산의 표시】", "   1. 1동의 건물의 표시", "", "   경기도 시험시 가상구 나라동 255-1",
+  "【이전할 근저당권 및 채무자의 표시】", "이전할 근저당권", mortgageLine, "  (채권최고액 : 금 504,000,000원)",
+  "채    무     자", "김가명", "경기도 시험시 가상구 나라로 170", "2026년     10월     29일",
 ];
+const TWO = "   2020년03월13일 접수 제14475호 순위 제3번으로 등기한 근저당권설정등기, 2022년01월19일 접수 제2943호 순위 제4번으로 등기한 근저당권설정등기. 단, 근저당권은 채권과 함께 이전함.";
+const ONE = "   2020년03월13일 접수 제14475호 순위 제3번으로 등기한 근저당권설정등기. 단, 근저당권은 채권과 함께 이전함.";
 
-describe("extractHwpFields", () => {
-  const d = extractHwpFields(sample);
-
-  it("원 접수번호·날짜는 ④에서, 이전 접수번호·날짜는 맨 위 접수 칸에서 읽는다", () => {
-    expect(d.receiptNumber.value).toBe("제57514호");
-    expect(d.registrationDate.value).toBe("2021년 7월 4일");
-    expect(d.transferReceiptNumber.value).toBe("제71426호");
-    expect(d.transferRegistrationDate.value).toBe("2026년 7월 19일");
-  });
-
-  it("부동산: 1동 건물의 소재·지번, 전유부분의 건물번호·면적 (대지권 토지 면적·건물명칭은 쓰지 않음)", () => {
-    expect(d.properties).toEqual([
-      {
-        location: { value: "서울특별시 마포구 공덕동" },
-        lotNumber: { value: "45-6" },
-        unitNumber: { value: "제2층 제201호" },
-        area: { value: "59.82㎡" },
-      },
+describe("extractHwpFields (양도증서)", () => {
+  it("이전할 근저당권 2건의 접수일·접수번호·순위를 읽는다", () => {
+    const d = extractHwpFields(sample(TWO));
+    expect(d.mortgages.map((m) => [m.registrationDate.value, m.receiptNumber.value, m.rank.value])).toEqual([
+      ["2020년03월13일", "제14475호", "3"],
+      ["2022년01월19일", "제2943호", "4"],
     ]);
+    expect(d.maxClaimAmount.value).toBe("금 504,000,000원");
   });
 
-  it("채권최고액, 여러 명의 채무자, 소유자를 ④에서 읽는다", () => {
-    expect(d.maxClaimAmount.value).toBe("금 322,000,000원");
-    expect(d.parties.debtor.map((x) => x.value)).toEqual(["조모의", "김가명"]);
-    expect(d.parties.owner.map((x) => x.value)).toEqual(["조모의"]);
+  it("근저당권 1건도 읽는다", () => {
+    expect(extractHwpFields(sample(ONE)).mortgages).toHaveLength(1);
   });
 
-  it("⑤·⑥은 성명과 등록번호 앞 6자리만 읽고, 뒷자리·역할 표시·주소는 읽지 않는다", () => {
-    expect(d.parties.mortgagee.map((x) => x.value)).toEqual(["주식회사 사아자캐피탈"]);
-    expect(d.parties.assignee.map((x) => x.value)).toEqual(["주식회사 러머버대부"]);
+  it("부동산: 소재지·지번, 건물 번호(고유번호 뺌), 전유부분 면적", () => {
+    const p = extractHwpFields(sample(ONE)).properties;
+    expect(p).toHaveLength(1);
+    expect(p[0].location.value).toBe("경기도 시험시 가상구 나라동");
+    expect(p[0].lotNumber.value).toBe("255-1");
+    expect(p[0].unitNumber.value).toBe("제8층 제씨-809호");
+    expect(p[0].area.value).toBe("80㎡");
+  });
+
+  it("양도인은 이름과 등록번호 앞 6자리만, 채무자는 이름만 읽는다", () => {
+    const d = extractHwpFields(sample(ONE));
+    expect(d.parties.mortgagee.map((x) => x.value)).toEqual(["가나다보험주식회사"]);
     expect(d.mortgageeIdFront.value).toBe("110111");
-    expect(d.assigneeIdFront.value).toBe("110111");
-    const all = JSON.stringify(d);
-    expect(all).not.toContain("1087115"); // 등록번호 뒷자리
-    expect(all).not.toContain("1079196");
-    expect(all).not.toContain("가상길"); // 주소
+    expect(JSON.stringify(d)).not.toContain("1234567");
+    expect(d.parties.debtor.map((x) => x.value)).toEqual(["김가명"]);
   });
 
-  it("가려진 주민등록번호(750101-*******)도 앞 6자리만 읽는다", () => {
-    const e = extractHwpFields(["⑤ 등기의무자", "홍길동", "근저당권자(양도인)", "750101-*******", "서울특별시 어딘가 1"]);
-    expect(e.mortgageeIdFront.value).toBe("750101");
-    expect(e.assigneeIdFront.value).toBeNull();
-  });
-
-  it("부동산이 여러 개면 '1. 1동의 건물의 표시'마다 하나씩", () => {
-    const two = extractHwpFields([
-      "① 부동산의 표시",
-      "1. 1동의 건물의 표시",
-      "서울특별시 강남구 역삼동 123-4 가상아파트 101동",
-      "건물의 번호 제10층 제1001호",
-      "면 적 84.97㎡",
-      "2. 1동의 건물의 표시",
-      "서울특별시 강남구 역삼동 123-5 가상아파트 102동",
-      "건물의 번호 제3층 제301호",
-      "면 적 59.10㎡",
-      "② 등기원인과 그 연월일",
-    ]);
-    expect(two.properties.map((p) => [p.lotNumber.value, p.unitNumber.value, p.area.value])).toEqual([
-      ["123-4", "제10층 제1001호", "84.97㎡"],
-      ["123-5", "제3층 제301호", "59.10㎡"],
-    ]);
-  });
-
-  it("칸이 없으면 추측하지 않고 읽지 못함(null)", () => {
-    const e = extractHwpFields(["④ 이전할 근저당권", "채권최고액 금 1원"]);
-    expect(e.receiptNumber.value).toBeNull();
-    expect(e.transferRegistrationDate.value).toBeNull();
-    // 칸을 못 찾으면 빈 목록(→ "한글 서류에 없음" 불일치)이 아니라 「읽지 못함」 1개
-    expect(e.parties.owner).toEqual([{ value: null }]);
-    expect(e.parties.mortgagee).toEqual([{ value: null }]);
-    expect(e.properties).toHaveLength(1);
-    expect(e.properties[0].location.value).toBeNull();
-    expect(e.properties[0].area.value).toBeNull();
-  });
-
-  it("칸을 못 찾은 신청서를 대조하면 「불일치」가 아니라 「읽지 못함」", () => {
-    const hwp = extractHwpFields(["④ 이전할 근저당권", "채권최고액 금 1원"]);
-    const reg = extractHwpFields([
-      "① 부동산의 표시", "1동의 건물의 표시", "서울특별시 마포구 공덕동 45-6 예시아파트", "건물의 번호 제2층 제201호", "면 적 59.82㎡",
-      "④ 이전할 근저당권", "2021년 7월 4일 접수 제57514호로 등기한 순위 제1번 근저당권", "채권최고액 금 1원", "채무자 조모의", "근저당권설정자(소유자) 조모의",
-      "⑤ 등기의무자", "주식회사 사아자캐피탈", "⑥ 등기권리자", "주식회사 러머버대부",
-    ]);
-    const rs = compareDocuments(hwp, reg);
-    for (const key of ["owner", "debtor", "mortgagee", "assignee", "location", "area"]) {
-      const statuses = rs.filter((r) => r.key === key).map((r) => r.status);
-      expect(statuses, key).not.toContain("mismatch");
-      expect(statuses, key).toContain("unreadable");
-    }
-  });
-
-  it("1동 건물 줄 형식을 모르면 소재·지번을 나누지 않는다", () => {
-    const e = extractHwpFields(["① 부동산의 표시", "1동의 건물의 표시", "알 수 없는 형식", "② 등기원인과 그 연월일"]);
-    expect(e.properties[0].location.value).toBeNull();
-    expect(e.properties[0].lotNumber.value).toBeNull();
+  it("빈 양식은 추측하지 않고 읽지 못함(null)", () => {
+    const d = extractHwpFields(["채권 양도인", "", "채    무     자", "2026년     월     일", "이전할 근저당권", ""]);
+    expect(d.parties.mortgagee[0].value).toBeNull();
+    expect(d.parties.debtor[0].value).toBeNull();
+    expect(d.mortgages[0].receiptNumber.value).toBeNull();
+    expect(compareDocuments(d, d).some((r) => r.status === "mismatch")).toBe(false);
   });
 });
 
 describe("readHwpParagraphs", () => {
   it("한글 파일이 아니면 오류", () => {
     expect(() => readHwpParagraphs(Buffer.from("not a hwp"))).toThrow(HwpReadError);
-  });
-});
-
-// ── 시험용 가짜 서류로 실제 읽기 ──
-const root = process.cwd();
-const dataPath = join(root, "tests", "fixtures-build", "cases.json");
-type RawCase = { folder: string; hwp: Record<string, unknown> & { parties: Record<string, string[]>; properties: Record<string, string>[] } };
-const cases: RawCase[] = existsSync(dataPath) ? JSON.parse(readFileSync(dataPath, "utf8")) : [];
-
-describe.skipIf(cases.length === 0)("시험용 한글 신청서 20건을 실제로 읽기", () => {
-  it.each(cases.map((c) => [c.folder, c] as const))("%s", (folder, c) => {
-    const file = readFileSync(join(root, "tests", "fixtures", folder, "근저당권이전_신청서.hwp"));
-    const d = extractHwpFields(readHwpParagraphs(file));
-    const h = c.hwp;
-    for (const role of ["mortgagee", "assignee", "debtor", "owner"] as const) {
-      expect(d.parties[role].map((x) => x.value), role).toEqual(h.parties[role]);
-    }
-    expect(d.properties.map((p) => ({ location: p.location.value, lotNumber: p.lotNumber.value, unitNumber: p.unitNumber.value, area: p.area.value }))).toEqual(h.properties);
-    for (const k of ["maxClaimAmount", "receiptNumber", "transferReceiptNumber", "registrationDate", "transferRegistrationDate"] as const) {
-      expect(d[k].value, k).toBe(h[k]);
-    }
-    const persons = (h as unknown as { extra: { persons: Record<string, { id: string }> } }).extra.persons;
-    expect(d.mortgageeIdFront.value).toBe(persons[h.parties.mortgagee[0]].id.split("-")[0]);
-    expect(d.assigneeIdFront.value).toBe(persons[h.parties.assignee[0]].id.split("-")[0]);
   });
 });

@@ -13,7 +13,7 @@ const hml = (lines: string[]) =>
       "</SECTION></BODY></HWPML>",
   ]);
 
-const HWP = hml(["⑤ 등기의무자", "주식회사 가나은행", "110111-1234567", "⑥ 등기권리자", "다라캐피탈 주식회사"]);
+const HWP = hml(["채권 양도인", "주식회사 가나은행 (110111-1234567)", "채권 양수인", "한국자산관리공사"]);
 
 /** 페이지 하나에 사진 하나인 PDF (사진 자료 크기를 정할 수 있게) */
 function pdf(imageBytes: number): Blob {
