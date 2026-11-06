@@ -5,8 +5,9 @@
 import "server-only";
 
 import { voteRegistryReads } from "./ocrVote";
-import { extractPageImages, PdfImageError } from "./pdfImages";
-import { readRegistryPdf, RegistryReadError, type RegistryRead } from "./registryOcr";
+import { decodePageImages, PdfImageError } from "./pdfImages";
+import { selectPageImages, type PageImageObject } from "./pdfPages";
+import { readRegistryImages, RegistryReadError, type RegistryRead } from "./registryOcr";
 import { DEFAULT_CONF_MIN, parseRegistryLines } from "./registryParse";
 import { recognizePage, type RecognizeOptions } from "./tesseractOcr";
 
@@ -24,16 +25,23 @@ const READS: RecognizeOptions[] = [
   { scale: 2, psm: "6", prep: "bin", threshold: 210 },
 ];
 
-export async function readRegistry(pdf: Buffer | Uint8Array, signal?: AbortSignal): Promise<RegistryRead> {
-  if ((process.env.OCR_ENGINE ?? "tesseract") === "openai") return readRegistryPdf(pdf, signal);
+/** 등기부 PDF 파일을 읽는다 (글자 읽기 실제 시험용) */
+export const readRegistry = (pdf: Buffer | Uint8Array, signal?: AbortSignal): Promise<RegistryRead> =>
+  readRegistryObjects(selectPageImages(pdf), signal);
 
+/**
+ * 브라우저가 PDF에서 꺼내 보낸 페이지 사진 후보로 등기부를 읽는다. (2026-11-06)
+ * 읽을 수 없으면 RegistryReadError.
+ */
+export async function readRegistryObjects(objects: PageImageObject[], signal?: AbortSignal): Promise<RegistryRead> {
   let pages: Buffer[];
   try {
-    pages = await extractPageImages(pdf);
+    pages = await decodePageImages(objects);
   } catch (err) {
     if (err instanceof PdfImageError) throw new RegistryReadError(err.message);
     throw err;
   }
+  if (pages.length > 0 && (process.env.OCR_ENGINE ?? "tesseract") === "openai") return readRegistryImages(pages, signal);
   if (pages.length === 0) {
     throw new RegistryReadError("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
   }

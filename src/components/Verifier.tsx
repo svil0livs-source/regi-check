@@ -11,6 +11,7 @@ import Navbar, { type NavLink } from "@/components/Navbar";
 import UploadModal from "@/components/UploadModal";
 import { checkFolders, type CaseCheck } from "@/lib/upload/checkFolders";
 import { fromDataTransfer, fromFileList, type PickedFile } from "@/lib/upload/collectFiles";
+import { prepareCase } from "@/lib/upload/prepareCase";
 import { clearAll, loadAll, save, type StoredOutcome } from "@/lib/storage/resultStore";
 import type { CaseOutcome } from "@/lib/verify/processCase";
 import {
@@ -56,10 +57,17 @@ const STATUS_ORDER: Record<FieldStatus, number> = { mismatch: 0, needs_review: 1
 const REQUEST_TIMEOUT_MS = 330_000;
 
 function httpErrorMessage(status: number): string {
-  if (status === 413) return "파일이 너무 커서 서버가 받지 못했습니다. 배포본은 한 건(한글+PDF) 합계 약 4.3MB까지 올릴 수 있습니다.";
+  if (status === 413) return "보낼 내용이 너무 커서 서버가 받지 못했습니다. 등기부등본에서 필요한 페이지만 담아 다시 올려 주세요.";
   if (status === 504 || status === 408) return "처리 시간이 한도(300초)를 넘었습니다. 페이지가 많은 등기부는 처리하지 못할 수 있습니다.";
   if (status >= 500) return `서버 오류로 처리하지 못했습니다 (HTTP ${status}). 잠시 뒤 같은 폴더를 다시 고르면 이어서 처리합니다.`;
   return `처리하지 못했습니다 (HTTP ${status}).`;
+}
+
+/** 브라우저에서 보낼 준비를 하다 멈춘 건 (서버에 보내지 않고 바로 결과로 쓴다) */
+class PrepareFailed extends Error {
+  constructor(readonly outcome: CaseOutcome) {
+    super("prepare failed");
+  }
 }
 
 const signatureOf = (hwp?: File, pdf?: File) =>
@@ -146,14 +154,14 @@ export default function Verifier() {
         if (ac.signal.aborted) break;
         if (row.state !== "waiting") continue;
         const { folder, hwpPath, pdfPath } = row.check;
-        setRows((rs) => rs.map((r) => (r.check.dir === row.check.dir ? { ...r, state: "running" } : r)));
+        setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "running" } : r)));
 
         let outcome: CaseOutcome;
         try {
-          const body = new FormData();
-          body.set("folder", folder);
-          body.set("hwp", files.get(hwpPath!)!);
-          body.set("pdf", files.get(pdfPath!)!);
+          // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (파일당 6000KB까지 받기 위해, 2026-11-06)
+          const prepared = await prepareCase(folder, files.get(hwpPath!)!, files.get(pdfPath!)!);
+          if (!prepared.ok) throw new PrepareFailed({ folder, summary: prepared.summary, results: [], error: prepared.error });
+          const body = prepared.body;
           // 서버 한도(300초)보다 조금 길게 기다린다. 연결이 멈춰도 끝없이 기다리지 않게 (CHECK 11번)
           const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
           const res = await fetch("/api/verify", { method: "POST", body, signal: AbortSignal.any([ac.signal, timeout]) });
@@ -164,19 +172,22 @@ export default function Verifier() {
               ? json
               : { folder, summary: "processing_failed", results: [], error: json?.error ?? httpErrorMessage(res.status) };
         } catch (err) {
-          if (ac.signal.aborted) {
-            setRows((rs) => rs.map((r) => (r.check.dir === row.check.dir ? { ...r, state: "waiting" } : r)));
+          if (err instanceof PrepareFailed) {
+            outcome = err.outcome;
+          } else if (ac.signal.aborted) {
+            setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "waiting" } : r)));
             break;
+          } else {
+            const timedOut = (err as Error)?.name === "TimeoutError";
+            outcome = {
+              folder,
+              summary: "processing_failed",
+              results: [],
+              error: timedOut
+                ? `${REQUEST_TIMEOUT_MS / 1000}초 안에 응답이 없어 멈췄습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.`
+                : "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
+            };
           }
-          const timedOut = (err as Error)?.name === "TimeoutError";
-          outcome = {
-            folder,
-            summary: "processing_failed",
-            results: [],
-            error: timedOut
-              ? `${REQUEST_TIMEOUT_MS / 1000}초 안에 응답이 없어 멈췄습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.`
-              : "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
-          };
         }
 
         // 끝난 건은 바로 보관 (창이 닫혀도 이어서 처리할 수 있게). 처리 실패는 다시 시도할 수 있게 보관하지 않는다.
@@ -185,7 +196,7 @@ export default function Verifier() {
           if (!(await save(folder, item))) setStorageWarning(true);
           setStored((m) => new Map(m).set(folder, item));
         }
-        setRows((rs) => rs.map((r) => (r.check.dir === row.check.dir ? { ...r, state: "done", outcome } : r)));
+        setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "done", outcome } : r)));
       }
     } finally {
       setRunning(false);
@@ -220,7 +231,7 @@ export default function Verifier() {
     return { total: ok.length, done: ok.filter((r) => r.state === "done").length, waiting: ok.filter((r) => r.state === "waiting").length };
   }, [rows]);
 
-  const detailRow = rows.find((r) => r.check.dir === detail);
+  const detailRow = rows.find((r) => r.check.id === detail);
   const [info, setInfo] = useState<InfoTopic | null>(null);
   const closeInfo = useCallback(() => setInfo(null), []);
   const showHero = rows.length === 0 && !history;
@@ -393,7 +404,7 @@ export default function Verifier() {
                       const s = r.outcome?.summary;
                       const canOpen = s === "mismatch_found" || s === "needs_review";
                       return (
-                        <tr key={r.check.dir} className="transition-colors hover:bg-white/[0.03]">
+                        <tr key={r.check.id} className="transition-colors hover:bg-white/[0.03]">
                           <td className="px-4 py-3 font-mono text-white">{r.check.folder}</td>
                           <td className="px-4 py-3">
                             {r.state === "waiting" && <span className="text-white/50">대기</span>}
@@ -406,7 +417,7 @@ export default function Verifier() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             {canOpen && (
-                              <button onClick={() => setDetail(r.check.dir)} className="rounded text-sm font-medium text-violet-200 hover:text-white hover:underline">
+                              <button onClick={() => setDetail(r.check.id)} className="rounded text-sm font-medium text-violet-200 hover:text-white hover:underline">
                                 자세히
                               </button>
                             )}

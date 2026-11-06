@@ -150,12 +150,19 @@ export function extractJpegPages(pdf: Buffer | Uint8Array): Buffer[] {
 
 /** 등기부 PDF를 보내 표 내용을 받는다. 실패하면 RegistryReadError. */
 export async function readRegistryPdf(pdf: Buffer | Uint8Array, signal?: AbortSignal): Promise<RegistryRead> {
+  return readRegistryImages(extractJpegPages(pdf), signal, pdf);
+}
+
+/**
+ * 페이지 사진들을 보내 표 내용을 받는다. 실패하면 RegistryReadError.
+ * 2026-11-06: 브라우저가 PDF에서 사진만 꺼내 보내므로 사진으로 받는다. 사진이 없을 때만 PDF(있으면) 그대로 보낸다.
+ */
+export async function readRegistryImages(jpegs: Buffer[], signal?: AbortSignal, pdf?: Buffer | Uint8Array): Promise<RegistryRead> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new RegistryReadError("글자 읽기 서비스 키(OPENAI_API_KEY)가 설정되지 않았습니다.");
   const model = process.env.OPENAI_MODEL || "gpt-5.5";
 
-  // 스캔 사진을 꺼낼 수 있으면 여백을 자르고 조각내 고해상도로 보내고(작은 글자를 더 잘 읽음), 아니면 PDF 그대로 보낸다
-  const jpegs = extractJpegPages(pdf);
+  // 스캔 사진이 있으면 여백을 자르고 조각내 고해상도로 보내고(작은 글자를 더 잘 읽음), 아니면 PDF 그대로 보낸다
   const docParts: Record<string, unknown>[] = [];
   let note = "";
   if (jpegs.length > 0) {
@@ -171,6 +178,8 @@ export async function readRegistryPdf(pdf: Buffer | Uint8Array, signal?: AbortSi
     note =
       "\n아래 사진들은 등기부 페이지를 위에서 아래로 차례로 자른 조각입니다. 순서대로 이어 붙여 한 문서로 읽으세요. " +
       "'겹침'이라고 표시된 조각은 앞 조각과 위쪽 일부가 같으니 같은 줄을 두 번 적지 마세요.";
+  } else if (!pdf) {
+    throw new RegistryReadError("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
   } else {
     docParts.push({ type: "input_file", filename: "registry.pdf", file_data: `data:application/pdf;base64,${Buffer.from(pdf).toString("base64")}` });
   }

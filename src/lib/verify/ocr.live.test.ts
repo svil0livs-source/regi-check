@@ -2,6 +2,8 @@
 // 몇 분 걸리는 시험이라(OpenAI면 비용도 듦) 평소(npm test)에는 건너뛴다.
 // 실행: RUN_OCR=1 npx vitest run src/lib/verify/ocr.live.test.ts
 //       특정 건만: RUN_OCR=1 OCR_CASES=2026-0001,2026-0007 npx vitest run src/lib/verify/ocr.live.test.ts
+//       줄여 보낸 사진으로: RUN_OCR=1 OCR_SHRINK=0.75 npx vitest run src/lib/verify/ocr.live.test.ts
+//         (2026-11-06) 브라우저가 큰 등기부를 회색조 JPEG로 다시 저장해 보내는 경우를 흉내 낸다. 값은 JPEG 화질(가장 낮은 0.75 권장).
 // 결과 요약은 tests/fixtures-build/ocr-report.json 에 남긴다 (커밋 안 함). 서류 내용은 로그에 찍지 않는다.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,7 +14,10 @@ vi.mock("server-only", () => ({}));
 import { summarizeCase } from "@/lib/compare/summarize";
 import { extractHwpFields } from "@/lib/readers/hwpFields";
 import { readHwpParagraphs } from "@/lib/readers/hwpText";
-import { readRegistry } from "@/lib/readers/registryRead";
+import { selectPageImages, type PageImageObject } from "@/lib/readers/pdfPages";
+import { readRegistry, readRegistryObjects } from "@/lib/readers/registryRead";
+import { grayJpegDict } from "@/lib/upload/fitImages";
+import sharp from "sharp";
 import { verifyCase } from "./verifyCase";
 
 const root = process.cwd();
@@ -34,6 +39,21 @@ const selected = answers.filter((a) => !only || only.includes(a.folder));
 
 const run = process.env.RUN_OCR === "1" && selected.length > 0;
 
+/** 브라우저의 줄이기(회색조 JPEG로 다시 저장)를 흉내 낸 등기부 읽기 */
+const shrinkQuality = Number(process.env.OCR_SHRINK) || 0;
+async function readShrunk(pdf: Buffer) {
+  const images: PageImageObject[] = [];
+  for (const o of selectPageImages(pdf)) {
+    if (!/\/Filter\s*\/DCTDecode/.test(o.dict)) {
+      images.push(o);
+      continue;
+    }
+    const { data, info } = await sharp(o.data).greyscale().jpeg({ quality: Math.round(shrinkQuality * 100) }).toBuffer({ resolveWithObject: true });
+    images.push({ page: o.page, dict: grayJpegDict(info.width, info.height), data });
+  }
+  return readRegistryObjects(images);
+}
+
 describe.skipIf(!run)("실제 글자 읽기로 시험용 서류 대조", () => {
   it(
     "정답표와 비교",
@@ -47,7 +67,8 @@ describe.skipIf(!run)("실제 글자 읽기로 시험용 서류 대조", () => {
           let got = "처리 실패";
           const problems: string[] = [];
           try {
-            const reg = await readRegistry(readFileSync(join(dir, "등기사항전부증명서.pdf")));
+            const pdf = readFileSync(join(dir, "등기사항전부증명서.pdf"));
+            const reg = shrinkQuality ? await readShrunk(pdf) : await readRegistry(pdf);
             const results = verifyCase(hwp, reg);
             const s = summarizeCase(results);
             got = { all_match: "전부 일치", mismatch_found: "불일치 있음", needs_review: "확인 필요" }[s as "all_match"] ?? s;
