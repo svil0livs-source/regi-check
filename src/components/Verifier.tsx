@@ -238,6 +238,14 @@ export default function Verifier() {
     }
   }
 
+  /** 왼쪽 위 REGI-CHECK: 첫 화면으로. 처리 중이면 멈출지 먼저 묻는다 (끝난 건 결과는 「이전 결과」에 남음) */
+  function goHome() {
+    if (running && !window.confirm("처리 중인 검증을 멈추고 첫 화면으로 갈까요? 끝난 건의 결과는 「이전 결과」에 남습니다.")) return;
+    setInfo(null);
+    void reset();
+    window.scrollTo({ top: 0 });
+  }
+
   async function reset() {
     abortRef.current?.abort();
     setRows([]);
@@ -316,6 +324,7 @@ export default function Verifier() {
         links={NAV_LINKS}
         onLink={(id) => (id === "history" ? (setHistory(true), setHistoryDetail(null)) : setInfo(id as InfoTopic))}
         action={hasWork ? { label: "새 검증 시작", onClick: reset } : null}
+        onHome={goHome}
       />
 
       {showHero ? (

@@ -15,9 +15,11 @@ interface Props {
   onLink: (id: string) => void;
   /** 오른쪽 버튼 (보이지 않게 하려면 null) */
   action: { label: string; onClick: () => void } | null;
+  /** 왼쪽 위 REGI-CHECK를 누르면 첫 화면으로 */
+  onHome: () => void;
 }
 
-export default function Navbar({ links, onLink, action }: Props) {
+export default function Navbar({ links, onLink, action, onHome }: Props) {
   const [open, setOpen] = useState(false);
   const reduce = useReducedMotion();
 
@@ -30,7 +32,17 @@ export default function Navbar({ links, onLink, action }: Props) {
     >
       <nav aria-label="주 메뉴" className="liquid-glass mx-auto flex max-w-5xl items-center justify-between rounded-full px-5 py-3 sm:px-6">
         <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center gap-2 rounded-full" aria-label="REGI-CHECK 처음 화면">
+          <Link
+            href="/"
+            className="flex items-center gap-2 rounded-full"
+            aria-label="REGI-CHECK 처음 화면"
+            onClick={(e) => {
+              // 같은 주소라 이동이 일어나지 않으므로 화면 상태를 직접 첫 화면으로 되돌린다
+              e.preventDefault();
+              setOpen(false);
+              onHome();
+            }}
+          >
             <FileCheck2 size={24} className="text-white" aria-hidden />
             <span className="flex flex-col leading-none">
               <span className="text-lg font-bold tracking-wide text-white">REGI-CHECK</span>
