@@ -45,7 +45,7 @@ export async function processCase(
  */
 export type PassOutcome =
   | { ok: true; read: RegistryRead; total: number }
-  | { ok: true; carry: string }
+  | { ok: true; carry: string; nextPage?: number }
   | { ok: false; outcome: CaseOutcome };
 
 /** 이번 요청이 몇 번째 읽기의 몇 번째 조각인지 */
@@ -57,7 +57,7 @@ export interface PassPosition {
   carry?: string;
 }
 
-/** 등기부를 pass번째 설정으로 한 번 읽는다 (2026-11-06: 요청마다 300초 한도 안에 끝나도록, 큰 파일은 조각으로 나눔) */
+/** 등기부를 pass번째 설정으로 한 번 읽는다 (2026-11-06: 큰 파일은 조각으로 나누고, 시간이 다 되면 중간에 멈춰 다음 요청으로 넘김) */
 export async function readCasePass(folder: string, images: PageImageObject[], at: PassPosition, signal?: AbortSignal): Promise<PassOutcome> {
   const fail = (error: string): PassOutcome => ({ ok: false, outcome: { folder, summary: "processing_failed", results: [], error } });
   try {
@@ -68,7 +68,8 @@ export async function readCasePass(folder: string, images: PageImageObject[], at
     }
     const r = await readRegistryPass(images, at.pass, signal, { carry, last: at.last });
     if (r.done) return { ok: true, read: r.read, total: r.total };
-    return { ok: true, carry: sealCarry(r.carry, { folder, pass: at.pass, chunk: at.chunk + 1 }) };
+    const sealed = sealCarry(r.carry, { folder, pass: at.pass, chunk: at.chunk + 1 });
+    return r.nextPage === undefined ? { ok: true, carry: sealed } : { ok: true, carry: sealed, nextPage: r.nextPage };
   } catch (err) {
     if (err instanceof RegistryReadError) return fail(err.message);
     if (err instanceof CarryKeyMissing) return fail("서버 설정(READ_CARRY_KEY)이 없어 큰 등기부를 나눠 읽을 수 없습니다. 관리자에게 알려 주세요.");
