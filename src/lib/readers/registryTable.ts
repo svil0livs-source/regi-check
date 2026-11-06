@@ -8,7 +8,7 @@ import "server-only";
 import sharp from "sharp";
 import type { ParseLine } from "./registryParse";
 import { fuzzyIncludes } from "./registryParse";
-import { findGrid, hasInk, isStruck, unitGlyphStart, type Box, type GrayImage } from "./tableGrid";
+import { findGrid, hasInk, isStruck, unitGlyphStart, withoutHandwriting, type Box, type GrayImage } from "./tableGrid";
 import { recognizeImage, type OcrBoxLine, type RecognizeOptions } from "./tesseractOcr";
 
 const letters = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, "");
@@ -28,11 +28,16 @@ interface BoxRead {
 }
 
 /** 칸(또는 페이지 일부)을 잘라 손질해 읽고, 취소선 줄은 뺀다 */
-async function readBox(page: Buffer, gray: GrayImage, box: Box, opts: RecognizeOptions, signal?: AbortSignal, digits = false): Promise<BoxRead> {
+async function readBox(page: Buffer, gray: GrayImage, box: Box, opts: RecognizeOptions, signal?: AbortSignal, digits = false, clean = false, zoom = 1): Promise<BoxRead> {
   // 실제 등기부는 300dpi다. 읽기 설정의 배율(200dpi 기준)을 300dpi에 맞춰 줄인다.
-  const scale = opts.scale / 1.5;
+  const scale = (opts.scale / 1.5) * zoom;
   const w = box.x1 - box.x0, h = box.y1 - box.y0;
-  let pipe = sharp(page).extract({ left: box.x0, top: box.y0, width: w, height: h }).greyscale();
+  // 표 칸은 볼펜 동그라미·체크 같은 손글씨를 지우고 읽는다 (취소선 찾기는 원래 사진으로 한다).
+  // 페이지 머리·표 제목은 큰 글씨가 있어 지우지 않는다.
+  const cleaned = clean ? withoutHandwriting(gray, box, digits) : null;
+  let pipe = cleaned
+    ? sharp(Buffer.from(cleaned), { raw: { width: w, height: h, channels: 1 } })
+    : sharp(page).extract({ left: box.x0, top: box.y0, width: w, height: h }).greyscale();
   if (scale !== 1) pipe = pipe.resize({ width: Math.round(w * scale), kernel: "lanczos3" });
   // 칸 가장자리에 여백을 줘야 글자 읽기가 안정적이다
   pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
@@ -45,7 +50,13 @@ async function readBox(page: Buffer, gray: GrayImage, box: Box, opts: RecognizeO
     x1: Math.min(box.x1, box.x0 + Math.round((b.x1 - 20) / scale)),
     y1: Math.min(box.y1, box.y0 + Math.round((b.y1 - 20) / scale)),
   });
-  const kept = all.filter((l) => !looksStruck(l.text) && !isStruck(gray, toPage(l.bbox)));
+  // 취소선 찾기도 손글씨를 지운 사진으로 한다 (볼펜 동그라미가 글자를 가로지르면 취소선으로 오해한다)
+  const cellImg: GrayImage | null = cleaned ? { width: w, height: h, data: cleaned } : null;
+  const struck = (b: Box) => {
+    const pb = toPage(b);
+    return cellImg ? isStruck(cellImg, { x0: pb.x0 - box.x0, y0: pb.y0 - box.y0, x1: pb.x1 - box.x0, y1: pb.y1 - box.y0 }) : isStruck(gray, pb);
+  };
+  const kept = all.filter((l) => !looksStruck(l.text) && !struck(l.bbox));
   return { lines: kept, allStruck: all.length > 0 && kept.length === 0, toPage };
 }
 
@@ -111,7 +122,11 @@ export async function readTablePage(
     // 갑구·을구 표(5칸)의 첫 칸은 순위번호: 숫자만 읽게 해 13을 18로 읽는 것 같은 실수를 줄인다
     const rankCol = row.cells.length === 5;
     const none: BoxRead = { lines: [], allStruck: false, toPage: (b) => b };
-    for (const [k, c] of row.cells.entries()) read.push(hasInk(gray, c) ? await readBox(page, gray, c, opts, signal, rankCol && k === 0) : none);
+    for (const [k, c] of row.cells.entries()) {
+      if (!hasInk(gray, c)) read.push(none);
+      else if (rankCol && k === 0) read.push(await readRank(page, gray, c, signal));
+      else read.push(await readBox(page, gray, c, opts, signal, false, true));
+    }
     // 등기목적·접수 칸 글자가 둘 다 모두 취소선이면 말소된 등기라 줄 전체를 버린다.
     // (순위번호 칸은 보지 않는다: 손으로 그린 동그라미·체크가 취소선처럼 보일 수 있다)
     if (read[1]?.allStruck && read[2]?.allStruck) continue;
@@ -119,6 +134,25 @@ export async function readTablePage(
     out.push(...joinCells(read.map((r) => r.lines)));
   }
   return out;
+}
+
+/**
+ * 순위번호 칸: 원래 크기와 2배 크기로 두 번 읽어, 확신 있는 읽기의 숫자를 쓴다 (2026-11-06).
+ * 손글씨를 지운 뒤에도 한 크기에서는 8을 6으로(확신도 0), 13을 135로 읽는 일이 있었다. 확신 있는 두 읽기가 다르면 비운다(→ 「읽지 못함」).
+ */
+async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortSignal): Promise<BoxRead> {
+  // 순위번호는 읽기 설정(배율·흑백)과 상관없이 늘 같은 방법으로 읽는다: 설정마다 결과가 달라 다수결이 갈렸다
+  const fixed: RecognizeOptions = { scale: 1.5, psm: "6" };
+  const a = await readBox(page, gray, box, fixed, signal, true, true, 1);
+  const b = await readBox(page, gray, box, fixed, signal, true, true, 2);
+  const num = (r: BoxRead) => r.lines.map((l) => l.text).join(" ").replace(/\s+/g, "");
+  const conf = (r: BoxRead) => Math.min(100, ...r.lines.flatMap((l) => l.words.map((w) => w.confidence)));
+  // 순위번호 모양("13", "6-1")이고 확신도 80 이상이면 원래 크기 읽기를 먼저 믿고, 아니면 2배 크기 읽기를 본다
+  // (2배 크기는 손글씨 옆 숫자에 강하지만, 멀쩡한 13을 135로 읽기도 했다)
+  const ok = (r: BoxRead) => /^\d+(-\d+)?$/.test(num(r)) && conf(r) >= 80;
+  if (ok(a)) return a;
+  if (ok(b)) return b;
+  return { lines: [], allStruck: a.allStruck && b.allStruck, toPage: b.toPage };
 }
 
 /**

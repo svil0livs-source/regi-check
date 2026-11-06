@@ -91,7 +91,7 @@ function valueFrom(line: ParseLine | undefined, raw: string | undefined, confMin
 const tidyName = (s: string) =>
   s
     .replace(/^[^\p{L}(]+/u, "")
-    .replace(/(\s+[ㄱ-ㆎ])+\s*$/u, "")
+    .replace(/(\s+[ㄱ-ㆎ]+)+\s*$/u, "") // 이름 뒤 떨어진 자모(체크 표시 자국 등 "ㄱㄱ")
     .replace(/[^\p{L}\p{N})]+$/u, "")
     .trim();
 
@@ -187,7 +187,9 @@ function amountValue(block: ParseLine[], confMin: number): OcrValue {
 }
 
 function parseMortgageBlock(block: ParseLine[], confMin: number): RegistryMortgage {
-  const rank = /^\s*(\d+)\s/.exec(block[0].text)?.[1] ?? "";
+  const rawRank = /^\s*(\d+)\s/.exec(block[0].text)?.[1] ?? "";
+  // 순위번호도 확신도가 낮으면 쓰지 않는다 (빈 값 → 「읽지 못함」)
+  const rank = rawRank && valueConfidence(block[0], rawRank) >= confMin ? rawRank : "";
   const debtors: OcrValue[] = [];
   let mortgagee: OcrValue = v(null, false);
   let mortgageeIdFront: OcrValue = v(null, false);

@@ -103,7 +103,8 @@ export function hasInk(img: GrayImage, b: Box): boolean {
     total++;
     if (isDark(img, x, y)) dark++;
   }
-  return total > 0 && dark / total > 0.003;
+  // 비율이 아니라 개수로 본다: 키 큰 칸에 숫자 하나만 있으면(순위번호 "6") 비율이 아주 작다
+  return total > 0 && dark >= 25;
 }
 
 /**
@@ -137,7 +138,8 @@ export function findGrid(img: GrayImage): GridRow[] {
 export function isStruck(img: GrayImage, line: Box): boolean {
   const w = line.x1 - line.x0;
   const h = line.y1 - line.y0;
-  if (w < 20 || h < 6) return false;
+  // 글자 한두 개짜리 줄(순위번호 "6" 등)은 글자 자체의 가로획을 취소선으로 오해하기 쉬워 보지 않는다
+  if (w < 20 || h < 6 || w < h * 2.5) return false;
   for (let y = line.y0 + Math.floor(h * 0.2); y <= line.y0 + Math.ceil(h * 0.85); y++) {
     let run = 0, best = 0, gap = 0;
     for (let x = line.x0; x < line.x1; x++) {
@@ -220,4 +222,74 @@ export function unitGlyphStart(img: GrayImage, b: Box): number | null {
   if (!widths.length) return null;
   const median = widths[Math.floor(widths.length / 2)];
   return last.x1 - last.x0 > median * 1.3 ? last.x0 : null;
+}
+
+/**
+ * 칸 안의 손글씨(볼펜 동그라미·체크 표시 등)를 지운 흑백 사진을 돌려준다 (2026-11-06 사용자 요청: 필기는 무시).
+ * 이어진 검은 점 묶음마다 크기를 보고, 인쇄 글자로 볼 수 없는 것만 흰색으로 지운다.
+ *   - 인쇄 글자(300dpi에서 높이 약 30점)보다 훨씬 높은 묶음 (동그라미·긴 획)
+ *   - 크기는 글자만 한데 속이 거의 빈 묶음 (체크 표시 ✓)
+ * 칸 안의 취소선은 지우지 않는다(가로로 길고 낮아서 위 조건에 걸리지 않음).
+ */
+export function withoutHandwriting(img: GrayImage, b: Box, faintToo = false): Uint8Array {
+  const w = b.x1 - b.x0, h = b.y1 - b.y0;
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) out.set(img.data.subarray((b.y0 + y) * img.width + b.x0, (b.y0 + y) * img.width + b.x0 + w), y * w);
+  const unit = img.width / 2480; // 300dpi A4 폭 기준 배율
+  // 볼펜 자국은 인쇄 글자보다 옅은 회색이라, 묶음을 찾을 때는 옅은 점까지 센다
+  const INK = 215;
+  // 인쇄 글자의 진한 부분 (이보다 진한 점은 손글씨 묶음 안에 있어도 지우지 않는다)
+  const PRINT = 110;
+  const FAINT = 160;
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  for (let start = 0; start < w * h; start++) {
+    if (seen[start] || out[start] >= INK) continue;
+    // 묶음 하나를 모은다 (8방향으로 이어진 검은 점)
+    const pts: number[] = [];
+    let x0 = w, y0 = h, x1 = 0, y1 = 0;
+    stack.push(start);
+    seen[start] = 1;
+    while (stack.length) {
+      const p = stack.pop()!;
+      pts.push(p);
+      const px = p % w, py = (p - px) / w;
+      if (px < x0) x0 = px;
+      if (px > x1) x1 = px;
+      if (py < y0) y0 = py;
+      if (py > y1) y1 = py;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = px + dx, ny = py + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const q = ny * w + nx;
+        if (!seen[q] && out[q] < INK) {
+          seen[q] = 1;
+          stack.push(q);
+        }
+      }
+    }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const fill = pts.length / (bw * bh);
+    const tooTall = bh > 55 * unit;
+    const hollow = bw > 30 * unit && bh > 30 * unit && fill < 0.1;
+    // 볼펜 선이 인쇄 글자에 닿으면 한 묶음이 된다. 묶음 전체가 아니라 옅은 점(볼펜)만 지우고 진한 점(인쇄)은 남긴다
+    if (tooTall || hollow) for (const p of pts) if (out[p] >= PRINT) out[p] = 255;
+    // 순위번호 칸의 먼지 같은 작은 점은 숫자를 잘못 읽게 한다
+    else if (faintToo && pts.length < 15 * unit * unit) for (const p of pts) out[p] = 255;
+  }
+  // 옅게 끊긴 볼펜 자국은 작은 조각으로 남아 묶음 크기로 못 거른다. faintToo면(순위번호 칸처럼 굵은 숫자만 있는 칸)
+  // 옅은 점을 모두 흰색으로 둔다. 다른 칸은 옅게 찍힌 인쇄 글자까지 지울 수 있어 하지 않는다
+  // 단, 진한 인쇄 획 바로 옆(2점 안)의 옅은 점은 글자 가장자리라 남긴다 (지우면 8이 6처럼 가늘어진다)
+  if (faintToo) {
+    const nearPrint = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (out[y * w + x] >= PRINT) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < w && ny < h) nearPrint[ny * w + nx] = 1;
+      }
+    }
+    for (let i = 0; i < out.length; i++) if (out[i] >= FAINT && !nearPrint[i]) out[i] = 255;
+  }
+  return out;
 }

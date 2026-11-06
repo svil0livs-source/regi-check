@@ -1,6 +1,6 @@
 // 표 칸 찾기·취소선 찾기 시험 (2026-11-06). 그림을 직접 그려 시험한다.
 import { describe, expect, it } from "vitest";
-import { findGrid, isStruck, unitGlyphStart, type GrayImage } from "./tableGrid";
+import { findGrid, isStruck, unitGlyphStart, withoutHandwriting, type GrayImage } from "./tableGrid";
 
 function blank(w: number, h: number): GrayImage {
   return { width: w, height: h, data: new Uint8Array(w * h).fill(255) };
@@ -79,5 +79,16 @@ describe("unitGlyphStart (면적 뒤 ㎡ 기호 찾기)", () => {
     const img = blank(300, 60);
     for (const x of [10, 30, 50]) rect(img, x, 10, x + 12, 40);
     expect(unitGlyphStart(img, { x0: 0, y0: 0, x1: 300, y1: 60 })).toBeNull();
+  });
+});
+
+describe("withoutHandwriting (볼펜 동그라미·체크 지우기)", () => {
+  it("글자보다 훨씬 높은 옅은 선(동그라미 일부)은 지우고, 진한 인쇄 글자는 남긴다", () => {
+    const img = blank(200, 200);
+    for (let y = 80; y < 110; y++) for (let x = 90; x < 105; x++) img.data[y * 200 + x] = 20; // 인쇄 숫자
+    for (let y = 10; y < 190; y++) img.data[y * 200 + 30] = 170; // 옅은 볼펜 세로 획
+    const out = withoutHandwriting(img, { x0: 0, y0: 0, x1: 200, y1: 200 });
+    expect(out[95 * 200 + 95]).toBe(20);
+    expect(out[100 * 200 + 30]).toBe(255);
   });
 });
