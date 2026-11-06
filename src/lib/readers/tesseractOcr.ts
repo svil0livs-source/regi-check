@@ -114,3 +114,42 @@ export async function recognizePage(image: Buffer, opts: RecognizeOptions | numb
   }
   return lines;
 }
+
+/** 칸 하나를 읽은 줄 (상자는 넘겨준 사진 기준 좌표) */
+export interface OcrBoxLine extends OcrLine {
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+  /** 단어마다 상자 (words와 같은 순서) */
+  wordBoxes: { x0: number; y0: number; x1: number; y1: number }[];
+}
+
+/**
+ * 이미 손질한 사진(PNG) 하나를 읽어 줄마다 글자·단어 확신도·상자를 돌려준다. (2026-11-06 표 칸 단위 읽기)
+ */
+export async function recognizeImage(png: Buffer, psm: Psm | "7", signal?: AbortSignal, whitelist = ""): Promise<OcrBoxLine[]> {
+  const data = await oneAtATime(async () => {
+    if (signal?.aborted) throw new DOMException("처리가 취소됐습니다.", "AbortError");
+    const worker = await getWorker();
+    try {
+      // whitelist: 순위번호 칸처럼 숫자만 있는 칸은 읽을 글자를 숫자로 좁힌다 (빈 값이면 제한 없음)
+      await worker.setParameters({ tessedit_pageseg_mode: psm as never, tessedit_char_whitelist: whitelist });
+      return (await worker.recognize(png, {}, { blocks: true, text: false })).data;
+    } catch (err) {
+      await discardWorker();
+      throw err;
+    }
+  });
+  const lines: OcrBoxLine[] = [];
+  for (const block of data.blocks ?? []) {
+    for (const para of block.paragraphs) {
+      for (const line of para.lines) {
+        lines.push({
+          text: line.text.replace(/\n/g, ""),
+          words: line.words.map((w) => ({ text: w.text, confidence: w.confidence })),
+          bbox: line.bbox,
+          wordBoxes: line.words.map((w) => w.bbox),
+        });
+      }
+    }
+  }
+  return lines;
+}

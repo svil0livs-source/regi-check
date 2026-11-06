@@ -5,7 +5,7 @@
 // 서버는 받은 값을 그대로 믿지 않고 모양을 엄격히 검사한다. 검사에 실패하면 null.
 import type { PageImageObject } from "@/lib/readers/pdfPages";
 import type { OcrValue, RegistryMortgage, RegistryRead, RegistryTransfer } from "@/lib/readers/registryOcr";
-import { PARTY_ROLES, PROPERTY_FIELD_KEYS, type DocumentFields, type ExtractedValue, type PropertyEntry } from "@/types/verification";
+import { PARTY_ROLES, PROPERTY_FIELD_KEYS, type DocumentFields, type ExtractedValue, type MortgageEntry, type PropertyEntry } from "@/types/verification";
 
 /** 요청 하나의 최대 크기: 배포본(Vercel) 요청 한도 약 4.5MB에서 머리말 몫을 뺀 값 */
 export const MAX_REQUEST_BYTES = Math.floor(4.3 * 1024 * 1024);
@@ -56,15 +56,12 @@ function property(v: unknown): PropertyEntry | null {
   return out;
 }
 
-const SINGLE_KEYS = [
-  "maxClaimAmount",
-  "receiptNumber",
-  "transferReceiptNumber",
-  "registrationDate",
-  "transferRegistrationDate",
-  "mortgageeIdFront",
-  "assigneeIdFront",
-] as const;
+/** 이전할 근저당권 1건 */
+function mortgageEntry(v: unknown): MortgageEntry | null {
+  if (!isObj(v)) return null;
+  const receiptNumber = value(v.receiptNumber), registrationDate = value(v.registrationDate), rank = value(v.rank);
+  return receiptNumber && registrationDate && rank ? { receiptNumber, registrationDate, rank } : null;
+}
 
 /** 브라우저가 보낸 한글 서류 값(JSON 글자)을 검사해 돌려준다. 모양이 틀리면 null */
 export function parseDocumentFields(json: string): DocumentFields | null {
@@ -83,18 +80,13 @@ export function parseDocumentFields(json: string): DocumentFields | null {
   }
   const properties = list(raw.properties, property);
   if (!properties) return null;
-  const out = { parties, properties } as DocumentFields;
-  for (const k of SINGLE_KEYS) {
-    const r = value(raw[k]);
-    if (!r) return null;
-    out[k] = r;
-  }
+  const mortgages = list(raw.mortgages, mortgageEntry);
+  const maxClaimAmount = value(raw.maxClaimAmount);
+  const mortgageeIdFront = value(raw.mortgageeIdFront);
+  if (!mortgages || !maxClaimAmount || !mortgageeIdFront) return null;
   // 등록번호는 앞 6자리만 받는다 (뒷자리가 섞여 오면 받지 않음)
-  for (const k of ["mortgageeIdFront", "assigneeIdFront"] as const) {
-    const v = out[k].value;
-    if (v !== null && v.replace(/\D/g, "").length > 6) return null;
-  }
-  return out;
+  if (mortgageeIdFront.value !== null && mortgageeIdFront.value.replace(/\D/g, "").length > 6) return null;
+  return { parties, properties, mortgages, maxClaimAmount, mortgageeIdFront };
 }
 
 /** 사진 정보 목록(JSON 글자)을 검사해 돌려준다. 모양이 틀리면 null */

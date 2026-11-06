@@ -1,35 +1,33 @@
 // Design Ref: DESIGN.md §4.1 — 검증에 쓰는 공통 용어와 데이터 모양
 // 식별자는 영어, 화면에 보이는 문구는 아래 *_LABELS의 한국어를 그대로 쓴다.
 
-/** 대조 항목 그룹 5개 (PRD must 2) */
+/**
+ * 대조 항목 그룹 (2026-11-06 사용자 결정: 실제 서류 「위임장 + 확정채권 및 근저당권 양도증서」에 있는 것만 대조)
+ * 한글 서류에 없는 소유자·양수인·이전등기 접수번호·이전등기 날짜는 대조하지 않는다.
+ */
 export type FieldGroup =
-  | "parties" // 당사자
+  | "parties" // 당사자 (양도인 = 근저당권자, 채무자)
   | "property" // 부동산 표시
-  | "maxClaimAmount" // 채권최고액
-  | "receiptNumber" // 접수번호
-  | "registrationDate"; // 등기날짜
+  | "maxClaimAmount" // 채권최고액 (이전할 근저당권 합계)
+  | "mortgage"; // 이전할 근저당권 (건마다 접수일·접수번호·순위)
 
-/** 세부 항목. 당사자 4개, 부동산 표시 4개, 나머지는 그룹과 같은 1개씩 */
 export type FieldKey =
   // 당사자
-  | "mortgagee" // 근저당권자
-  | "assignee" // 양수인
+  | "mortgagee" // 근저당권자 = 한글 서류의 「채권 양도인」
   | "debtor" // 채무자
-  | "owner" // 소유자
   // 부동산 표시
   | "location" // 소재지
   | "lotNumber" // 지번
   | "unitNumber" // 건물 호수
   | "area" // 면적
-  // 단일 항목
+  // 채권최고액: 이전할 근저당권이 여러 건이면 합계 (2026-11-06 사용자 확인)
   | "maxClaimAmount"
-  | "receiptNumber" // 원 접수번호: 원래 근저당권(주등기)의 접수번호
-  | "transferReceiptNumber" // 이전 접수번호: 근저당권이전(부기등기)의 접수번호
-  | "registrationDate" // 원 등기날짜: 원래 근저당권(주등기)의 날짜
-  | "transferRegistrationDate" // 이전 등기날짜: 근저당권이전(부기등기)의 날짜
-  // 등록번호 앞 6자리 (2026-11-05 사용자 요청). 뒷자리는 가려져 있을 수 있고 개인정보라 읽지 않는다.
-  | "mortgageeIdFront" // 근저당권자(양도인)의 주민·법인등록번호 앞 6자리
-  | "assigneeIdFront"; // 양수인의 주민·법인등록번호 앞 6자리
+  // 이전할 근저당권 (1~2건, 건마다 index)
+  | "receiptNumber" // 접수번호
+  | "registrationDate" // 접수일(등기날짜)
+  | "rank" // 순위번호
+  // 양도인 주민·법인등록번호 앞 6자리. 뒷자리는 읽지 않는다.
+  | "mortgageeIdFront";
 
 /** 값을 어떤 규칙으로 비교할지 정하는 종류 */
 export type CompareKind =
@@ -40,37 +38,30 @@ export type CompareKind =
   | "unitNumber" // 건물 호수: "제201호" = "201호"
   | "area" // 면적: "59.82㎡" = "59.82제곱미터" = "59.82m²" = "59.820㎡"
   | "amount" // 금액: 숫자 한 자리라도 다르면 불일치
-  | "receiptNumber" // 접수번호: 숫자 한 자리라도 다르면 불일치
+  | "receiptNumber" // 접수번호·순위번호: 숫자 한 자리라도 다르면 불일치
   | "date" // 날짜: 연·월·일 중 하나라도 다르면 불일치
   | "idFront"; // 등록번호 앞 6자리: 한 자리라도 다르면 불일치
 
 /** 세부 항목별 소속 그룹과 비교 종류 */
-export const FIELD_DEFINITIONS: Record<
-  FieldKey,
-  { group: FieldGroup; kind: CompareKind }
-> = {
+export const FIELD_DEFINITIONS: Record<FieldKey, { group: FieldGroup; kind: CompareKind }> = {
   mortgagee: { group: "parties", kind: "name" },
-  assignee: { group: "parties", kind: "name" },
   debtor: { group: "parties", kind: "name" },
-  owner: { group: "parties", kind: "name" },
   location: { group: "property", kind: "address" },
   lotNumber: { group: "property", kind: "lotNumber" },
   unitNumber: { group: "property", kind: "unitNumber" },
   area: { group: "property", kind: "area" },
   maxClaimAmount: { group: "maxClaimAmount", kind: "amount" },
-  receiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
-  transferReceiptNumber: { group: "receiptNumber", kind: "receiptNumber" },
-  registrationDate: { group: "registrationDate", kind: "date" },
-  transferRegistrationDate: { group: "registrationDate", kind: "date" },
+  receiptNumber: { group: "mortgage", kind: "receiptNumber" },
+  registrationDate: { group: "mortgage", kind: "date" },
+  rank: { group: "mortgage", kind: "receiptNumber" },
   mortgageeIdFront: { group: "parties", kind: "idFront" },
-  assigneeIdFront: { group: "parties", kind: "idFront" },
 };
 
-/** 모든 세부 항목 (한 건마다 이 15개를 빠짐없이 대조한다) */
+/** 모든 세부 항목 */
 export const ALL_FIELD_KEYS = Object.keys(FIELD_DEFINITIONS) as FieldKey[];
 
-/** 두 문서 모두에 값이 있을 때만 대조하는 항목 (등록번호 앞 6자리, PRD §5 must2). 빠져도 「전부 일치」를 막지 않는다. */
-export const OPTIONAL_FIELD_KEYS: FieldKey[] = ["mortgageeIdFront", "assigneeIdFront"];
+/** 두 문서 모두에 값이 있을 때만 대조하는 항목 (등록번호 앞 6자리). 빠져도 「전부 일치」를 막지 않는다. */
+export const OPTIONAL_FIELD_KEYS: FieldKey[] = ["mortgageeIdFront"];
 
 /**
  * 문서에서 읽어 온 값 하나.
@@ -98,10 +89,10 @@ export interface FieldResult {
 
 // ── 여러 명·여러 개 (DESIGN.md §4.5, §4.7) ──────────────────────────
 
-/** 당사자 역할 4개 (세부 항목 키와 같은 이름) */
-export type PartyRole = "mortgagee" | "assignee" | "debtor" | "owner";
+/** 당사자 역할 (세부 항목 키와 같은 이름) */
+export type PartyRole = "mortgagee" | "debtor";
 
-export const PARTY_ROLES: PartyRole[] = ["mortgagee", "assignee", "debtor", "owner"];
+export const PARTY_ROLES: PartyRole[] = ["mortgagee", "debtor"];
 
 /** 부동산 1개 = 4개 칸 묶음 */
 export interface PropertyEntry {
@@ -121,17 +112,21 @@ export const PROPERTY_FIELD_KEYS: PropertyFieldKey[] = [
   "area",
 ];
 
+/** 이전할 근저당권 1건 */
+export interface MortgageEntry {
+  receiptNumber: ExtractedValue; // 접수번호 (예: 제14475호)
+  registrationDate: ExtractedValue; // 접수일 (예: 2020년03월13일)
+  rank: ExtractedValue; // 순위번호 (예: 3)
+}
+
 /** 문서 하나에서 읽은 전체 값 (한글 서류용 1개, 등기부등본용 1개) */
 export interface DocumentFields {
   parties: Record<PartyRole, ExtractedValue[]>; // 역할마다 여러 명
   properties: PropertyEntry[]; // 부동산 여러 개
-  maxClaimAmount: ExtractedValue;
-  receiptNumber: ExtractedValue; // 원 접수번호 (주등기)
-  transferReceiptNumber: ExtractedValue; // 이전 접수번호 (부기등기)
-  registrationDate: ExtractedValue; // 원 등기날짜 (주등기)
-  transferRegistrationDate: ExtractedValue; // 이전 등기날짜 (부기등기)
-  mortgageeIdFront: ExtractedValue; // 근저당권자 등록번호 앞 6자리 (뒷자리는 담지 않는다)
-  assigneeIdFront: ExtractedValue; // 양수인 등록번호 앞 6자리 (뒷자리는 담지 않는다)
+  /** 이전할 근저당권 (보통 1건, 많아야 2건). 등기부 쪽은 접수번호로 찾은 같은 순서의 건 */
+  mortgages: MortgageEntry[];
+  maxClaimAmount: ExtractedValue; // 이전할 근저당권 채권최고액 합계
+  mortgageeIdFront: ExtractedValue; // 양도인(근저당권자) 등록번호 앞 6자리 (뒷자리는 담지 않는다)
 }
 
 /**
@@ -168,25 +163,20 @@ export const FIELD_GROUP_LABELS: Record<FieldGroup, string> = {
   parties: "당사자",
   property: "부동산 표시",
   maxClaimAmount: "채권최고액",
-  receiptNumber: "접수번호",
-  registrationDate: "등기날짜",
+  mortgage: "이전할 근저당권",
 };
 
 /** 화면 문구: 세부 항목 */
 export const FIELD_KEY_LABELS: Record<FieldKey, string> = {
-  mortgagee: "근저당권자",
-  assignee: "양수인",
+  mortgagee: "근저당권자(양도인)",
   debtor: "채무자",
-  owner: "소유자",
   location: "소재지",
   lotNumber: "지번",
   unitNumber: "건물 호수",
   area: "면적",
-  maxClaimAmount: "채권최고액",
-  receiptNumber: "원 접수번호",
-  transferReceiptNumber: "이전 접수번호",
-  registrationDate: "원 등기날짜",
-  transferRegistrationDate: "이전 등기날짜",
-  mortgageeIdFront: "근저당권자 등록번호(앞 6자리)",
-  assigneeIdFront: "양수인 등록번호(앞 6자리)",
+  maxClaimAmount: "채권최고액(합계)",
+  receiptNumber: "접수번호",
+  registrationDate: "접수일",
+  rank: "순위번호",
+  mortgageeIdFront: "양도인 등록번호(앞 6자리)",
 };

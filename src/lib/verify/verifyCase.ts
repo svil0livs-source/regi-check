@@ -3,10 +3,9 @@
 // 외부 서비스를 부르지 않는 순수 함수라서 서류 없이 시험할 수 있다.
 
 import { compareDocuments } from "@/lib/compare/compareDocuments";
-import { normalizeReceiptNumber } from "@/lib/compare/normalize";
+import { normalizeAmount, normalizeReceiptNumber } from "@/lib/compare/normalize";
 import {
   FIELD_DEFINITIONS,
-  OPTIONAL_FIELD_KEYS,
   type DocumentFields,
   type ExtractedValue,
   type FieldKey,
@@ -17,119 +16,103 @@ import type { OcrValue, RegistryMortgage, RegistryRead, RegistryTransfer } from 
 const toValue = (v: OcrValue | undefined): ExtractedValue =>
   v ? { value: v.text, lowConfidence: v.uncertain } : { value: null };
 
-/** 근저당권(주등기)에 딸린 항목 */
-const MORTGAGE_KEYS: FieldKey[] = ["mortgagee", "mortgageeIdFront", "debtor", "maxClaimAmount", "registrationDate"];
-/** 근저당권이전(부기등기)에 딸린 항목 */
-const TRANSFER_KEYS: FieldKey[] = ["assignee", "assigneeIdFront", "transferReceiptNumber", "transferRegistrationDate"];
+/** 이번 서류의 양수인. 등기부에 이미 이전이 끝나 이 이름이 나와도 양도인으로 보지 않는다 */
+const ASSIGNEE_NAME = "한국자산관리공사";
 
 /** 부동산 표시 항목 */
 const PROPERTY_KEYS: FieldKey[] = ["location", "lotNumber", "unitNumber", "area"];
 
 /** 항목 결과를 강제로 정할 때 쓰는 값 */
 interface Forced {
+  key: FieldKey;
+  index?: number;
   status: "mismatch" | "needs_review";
   reason: string;
   registryValue?: string | null;
 }
 
-/** 한쪽 문서 값 목록 중 접수번호가 같은 것 찾기 (확신 낮은 번호는 짝짓기에 쓰지 않음) */
-function matchByReceipt<T extends { receiptNumber: OcrValue }>(list: T[], hwpReceipt: ExtractedValue): T[] {
-  const target = hwpReceipt.value ? normalizeReceiptNumber(hwpReceipt.value) : null;
-  if (!target) return [];
-  return list.filter((m) => {
-    if (!m.receiptNumber.text || m.receiptNumber.uncertain) return false;
-    return normalizeReceiptNumber(m.receiptNumber.text) === target;
-  });
-}
-
-const hwpReceiptReadable = (v: ExtractedValue) => !!v.value && normalizeReceiptNumber(v.value) !== null;
+const receiptOf = (v: ExtractedValue) => (v.value ? normalizeReceiptNumber(v.value) : null);
 
 /**
- * 등기부 쪽 후보 중 접수번호를 못 읽었거나 확신이 낮은 것이 있는지.
- * 있으면 "해당 접수번호 없음"(불일치)으로 단정하지 않는다 — 그 건이 맞는 건일 수도 있다. (확신 없으면 「확인 필요」)
+ * 한글 서류의 이전할 근저당권마다 등기부에서 같은 접수번호의 근저당권을 찾는다.
+ * - 등기부 근저당권이 1건이고 서류도 1건이면 번호가 달라도 그 건과 비교한다 (틀린 번호를 불일치로 보여 주기 위해)
+ * - 찾지 못하면: 번호를 확신할 수 있으면 「해당 접수번호 없음」(불일치), 아니면 「확인 필요」
  */
-const someReceiptUnsure = (list: { receiptNumber: OcrValue }[]) =>
-  list.some((m) => !m.receiptNumber.text || m.receiptNumber.uncertain);
-
-/** 근저당권·부기등기를 고르고, 고르지 못한 경우의 강제 결과를 정한다 */
-function selectMortgage(reg: RegistryRead, hwp: DocumentFields) {
-  const forced = new Map<FieldKey, Forced>();
+function selectMortgages(reg: RegistryRead, hwp: DocumentFields) {
+  const forced: Forced[] = [];
   const all = reg.mortgages;
-  let mortgage: RegistryMortgage | undefined;
-
-  // ── 1단계: 원 접수번호 → 근저당권(주등기)
-  if (all.length === 0) {
-    forced.set("receiptNumber", { status: "mismatch", reason: "등기부등본에 근저당권이 없음", registryValue: null });
-    for (const k of [...MORTGAGE_KEYS, ...TRANSFER_KEYS]) forced.set(k, { status: "needs_review", reason: "등기부등본에서 근저당권을 찾지 못함" });
-    return { mortgage, transfer: undefined, forced };
-  }
-  if (all.length === 1) {
-    mortgage = all[0];
-  } else {
-    const hits = matchByReceipt(all, hwp.receiptNumber);
-    if (hits.length === 1) {
-      mortgage = hits[0];
-    } else {
-      const unsure = hits.length === 0 && someReceiptUnsure(all);
-      const why =
-        hits.length > 1
-          ? "같은 접수번호의 근저당권이 여러 건이라 어느 것과 비교할지 확신할 수 없음"
-          : !hwpReceiptReadable(hwp.receiptNumber)
-            ? "한글 서류의 원 접수번호를 읽지 못해 근저당권을 고를 수 없음"
-            : unsure
-              ? "등기부등본의 접수번호 일부를 확신할 수 없어 해당 근저당권을 고를 수 없음"
-              : "한글 서류의 원 접수번호와 같은 근저당권이 없어 어느 것과 비교할지 모름";
-      if (hits.length === 0 && hwpReceiptReadable(hwp.receiptNumber) && !unsure) {
-        forced.set("receiptNumber", { status: "mismatch", reason: "해당 접수번호 없음", registryValue: "해당 접수번호 없음" });
-      } else if (hits.length > 1 || (unsure && hwpReceiptReadable(hwp.receiptNumber))) {
-        forced.set("receiptNumber", { status: "needs_review", reason: why });
-      }
-      // 한글 서류 번호를 못 읽은 경우: 원 접수번호는 compareField가 「읽지 못함」으로 처리
-      for (const k of [...MORTGAGE_KEYS, ...TRANSFER_KEYS]) forced.set(k, { status: "needs_review", reason: why });
-      return { mortgage, transfer: undefined, forced };
+  const picked: (RegistryMortgage | undefined)[] = hwp.mortgages.map((m, i) => {
+    const index = i + 1;
+    const needAll = (reason: string) => {
+      for (const key of ["receiptNumber", "registrationDate", "rank"] as const) forced.push({ key, index, status: "needs_review", reason });
+    };
+    if (all.length === 0) {
+      forced.push({ key: "receiptNumber", index, status: "mismatch", reason: "등기부등본에 근저당권이 없음", registryValue: null });
+      forced.push({ key: "registrationDate", index, status: "needs_review", reason: "등기부등본에서 근저당권을 찾지 못함" });
+      forced.push({ key: "rank", index, status: "needs_review", reason: "등기부등본에서 근저당권을 찾지 못함" });
+      return undefined;
     }
-  }
-
-  // ── 2단계: 이전 접수번호 → 근저당권이전(부기등기)
-  const transfers = mortgage.transfers;
-  let transfer: RegistryTransfer | undefined;
-  if (transfers.length === 0) {
-    for (const k of TRANSFER_KEYS) forced.set(k, { status: "mismatch", reason: "등기부등본에 없음 (근저당권이전 기록 없음)", registryValue: null });
-  } else if (transfers.length === 1) {
-    transfer = transfers[0];
-  } else {
-    const hits = matchByReceipt(transfers, hwp.transferReceiptNumber);
-    if (hits.length === 1) {
-      transfer = hits[0];
-    } else {
-      const unsure = hits.length === 0 && someReceiptUnsure(transfers);
-      const why =
-        hits.length > 1
-          ? "같은 접수번호의 근저당권이전이 여러 건이라 확신할 수 없음"
-          : unsure
-            ? "등기부등본의 이전 접수번호 일부를 확신할 수 없어 해당 근저당권이전을 고를 수 없음"
-            : "한글 서류의 이전 접수번호와 같은 근저당권이전을 찾지 못함";
-      if (hits.length === 0 && hwpReceiptReadable(hwp.transferReceiptNumber) && !unsure) {
-        forced.set("transferReceiptNumber", { status: "mismatch", reason: "해당 접수번호 없음", registryValue: "해당 접수번호 없음" });
-      } else if (hits.length > 1 || (unsure && hwpReceiptReadable(hwp.transferReceiptNumber))) {
-        forced.set("transferReceiptNumber", { status: "needs_review", reason: why });
-      }
-      forced.set("assignee", { status: "needs_review", reason: why });
-      forced.set("assigneeIdFront", { status: "needs_review", reason: why });
-      forced.set("transferRegistrationDate", { status: "needs_review", reason: why });
+    if (all.length === 1 && hwp.mortgages.length === 1) return all[0];
+    const target = receiptOf(m.receiptNumber);
+    if (!target) {
+      needAll("한글 서류의 접수번호를 읽지 못해 등기부의 근저당권을 고를 수 없음");
+      return undefined;
     }
-  }
-  return { mortgage, transfer, forced };
+    const hits = all.filter((r) => r.receiptNumber.text && !r.receiptNumber.uncertain && normalizeReceiptNumber(r.receiptNumber.text) === target);
+    if (hits.length === 1) return hits[0];
+    // 건물·토지 등기부가 한 PDF에 함께 있으면 같은 공동담보 근저당권이 여러 번 나온다: 접수일까지 같으면 같은 건으로 본다
+    const sameDay = (r: RegistryMortgage) => r.registrationDate.text?.replace(/\s+/g, "");
+    if (hits.length > 1 && hits.every((h) => !h.registrationDate.uncertain && sameDay(h) && sameDay(h) === sameDay(hits[0]))) return hits[0];
+    if (hits.length > 1) {
+      needAll("같은 접수번호의 근저당권이 여러 건이라 어느 것과 비교할지 확신할 수 없음");
+      return undefined;
+    }
+    if (all.some((r) => !r.receiptNumber.text || r.receiptNumber.uncertain)) {
+      needAll("등기부등본의 접수번호 일부를 확신할 수 없어 해당 근저당권을 고를 수 없음");
+      return undefined;
+    }
+    forced.push({ key: "receiptNumber", index, status: "mismatch", reason: "해당 접수번호 없음", registryValue: "해당 접수번호 없음" });
+    forced.push({ key: "registrationDate", index, status: "needs_review", reason: "등기부등본에서 같은 접수번호의 근저당권을 찾지 못함" });
+    forced.push({ key: "rank", index, status: "needs_review", reason: "등기부등본에서 같은 접수번호의 근저당권을 찾지 못함" });
+    return undefined;
+  });
+  return { picked, forced };
 }
 
-/** 등기부에서 옮겨 적은 내용 → 대조용 등기부 값 */
-export function registryToFields(reg: RegistryRead, mortgage?: RegistryMortgage, transfer?: RegistryTransfer): DocumentFields {
+/**
+ * 근저당권의 지금 권리자(= 이번 서류의 양도인): 원 근저당권자 → 이전(부기등기) 양수인 순서에서
+ * 마지막 사람. 단 이번 양수인(한국자산관리공사)은 건너뛴다.
+ */
+function currentHolder(m: RegistryMortgage): { name: OcrValue; idFront: OcrValue } {
+  const chain = [{ name: m.mortgagee, idFront: m.mortgageeIdFront }, ...m.transfers.map((t: RegistryTransfer) => ({ name: t.assignee, idFront: t.assigneeIdFront }))];
+  const notAssignee = chain.filter((c) => !(c.name.text ?? "").replace(/\s+/g, "").includes(ASSIGNEE_NAME));
+  return notAssignee[notAssignee.length - 1] ?? chain[0];
+}
+
+/** 채권최고액 합계 (하나라도 읽지 못하면 null, 확신 낮으면 확신 낮음) */
+function sumAmounts(list: RegistryMortgage[]): ExtractedValue {
+  let total = BigInt(0);
+  let low = false;
+  for (const m of list) {
+    const n = m.maxClaimAmount.text ? normalizeAmount(m.maxClaimAmount.text) : null;
+    if (n === null) return { value: null };
+    total += BigInt(n);
+    low ||= m.maxClaimAmount.uncertain;
+  }
+  if (list.length === 1) return toValue(list[0].maxClaimAmount);
+  return { value: `금 ${total.toLocaleString("en-US")}원`, lowConfidence: low };
+}
+
+/** 등기부에서 옮겨 적은 내용 → 대조용 등기부 값 (picked: 한글 서류 근저당권과 같은 순서로 찾은 건) */
+export function registryToFields(reg: RegistryRead, picked: (RegistryMortgage | undefined)[]): DocumentFields {
+  const found = picked.filter((m): m is RegistryMortgage => !!m);
+  const holder = found[0] ? currentHolder(found[0]) : undefined;
+  const debtors: OcrValue[] = [];
+  for (const m of found) for (const d of m.debtors) if (!debtors.some((x) => x.text === d.text)) debtors.push(d);
   return {
     parties: {
-      mortgagee: mortgage ? [toValue(mortgage.mortgagee)] : [],
-      assignee: transfer ? [toValue(transfer.assignee)] : [],
-      debtor: mortgage ? mortgage.debtors.map(toValue) : [],
-      owner: reg.owners.map(toValue),
+      mortgagee: holder ? [toValue(holder.name)] : [],
+      debtor: debtors.map(toValue),
     },
     properties: reg.properties.map((p) => ({
       location: toValue(p.location),
@@ -137,64 +120,69 @@ export function registryToFields(reg: RegistryRead, mortgage?: RegistryMortgage,
       unitNumber: toValue(p.unitNumber),
       area: toValue(p.area),
     })),
-    maxClaimAmount: toValue(mortgage?.maxClaimAmount),
-    receiptNumber: toValue(mortgage?.receiptNumber),
-    transferReceiptNumber: toValue(transfer?.receiptNumber),
-    registrationDate: toValue(mortgage?.registrationDate),
-    transferRegistrationDate: toValue(transfer?.registrationDate),
-    mortgageeIdFront: toValue(mortgage?.mortgageeIdFront),
-    assigneeIdFront: toValue(transfer?.assigneeIdFront),
+    mortgages: picked.map((m) => ({
+      receiptNumber: toValue(m?.receiptNumber),
+      registrationDate: toValue(m?.registrationDate),
+      rank: { value: m?.rank || null },
+    })),
+    maxClaimAmount: found.length ? sumAmounts(found) : { value: null },
+    mortgageeIdFront: toValue(holder?.idFront),
   };
 }
 
-/** 한쪽 문서의 항목 값을 보기 좋게 합친다 (강제 결과의 한글 서류 칸에 쓰기 위해) */
-function hwpValueOf(hwp: DocumentFields, key: FieldKey): string | null {
-  if (PROPERTY_KEYS.includes(key)) {
-    const k = key as keyof DocumentFields["properties"][number];
-    return hwp.properties.length ? hwp.properties.map((p) => p[k].value ?? "(읽지 못함)").join(", ") : null;
-  }
-  if (key in hwp.parties) {
-    const list = hwp.parties[key as keyof DocumentFields["parties"]];
-    return list.length ? list.map((v) => v.value ?? "(읽지 못함)").join(", ") : null;
-  }
-  const v = (hwp as unknown as Record<string, ExtractedValue | undefined>)[key];
-  return v && "value" in v ? v.value : null;
+/** 한글 서류 쪽 값을 보기 좋게 합친다 (강제 결과의 한글 서류 칸에 쓰기 위해) */
+function hwpValueOf(hwp: DocumentFields, f: Forced): string | null {
+  const join = (l: ExtractedValue[]) => (l.length ? l.map((v) => v.value ?? "(읽지 못함)").join(", ") : null);
+  if (PROPERTY_KEYS.includes(f.key)) return join(hwp.properties.map((p) => p[f.key as keyof DocumentFields["properties"][number]]));
+  if (f.key === "mortgagee" || f.key === "debtor") return join(hwp.parties[f.key]);
+  if (f.key === "receiptNumber" || f.key === "registrationDate" || f.key === "rank") return hwp.mortgages[(f.index ?? 1) - 1]?.[f.key].value ?? null;
+  if (f.key === "maxClaimAmount" || f.key === "mortgageeIdFront") return hwp[f.key].value;
+  return null;
 }
 
-/** 한글 서류 쪽에서 그 항목을 읽지 못했는지 */
-function hwpUnreadable(hwp: DocumentFields, key: FieldKey): boolean {
-  if (key in hwp.parties) return hwp.parties[key as keyof DocumentFields["parties"]].some((v) => v.value === null);
-  const v = (hwp as unknown as Record<string, ExtractedValue | undefined>)[key];
-  return !!v && "value" in v && v.value === null;
+/** 한글 서류 쪽에서 그 항목을 읽지 못했는지 (그러면 비교 결과 「읽지 못함」을 그대로 둔다) */
+function hwpUnreadable(hwp: DocumentFields, f: Forced): boolean {
+  if (f.key === "mortgagee" || f.key === "debtor") return hwp.parties[f.key].some((v) => v.value === null);
+  if (f.key === "receiptNumber" || f.key === "registrationDate" || f.key === "rank") return hwp.mortgages[(f.index ?? 1) - 1]?.[f.key].value === null;
+  if (f.key === "maxClaimAmount") return hwp.maxClaimAmount.value === null;
+  return false;
 }
 
-/** 건 하나를 대조한다: 근저당권 고르기 → 항목 비교 → 고르지 못한 항목은 강제 결과로 바꾸기 */
+/** 건 하나를 대조한다: 근저당권 찾기 → 항목 비교 → 고르지 못한 항목은 강제 결과로 바꾸기 */
 export function verifyCase(hwp: DocumentFields, reg: RegistryRead): FieldResult[] {
-  const { mortgage, transfer, forced } = selectMortgage(reg, hwp);
-  // 등록번호 앞 6자리는 두 문서 모두에 번호가 있을 때만 대조한다(DESIGN §4.2). 근저당권을 고르지 못해
-  // 등기부 쪽 번호가 없으면 강제 결과도 넣지 않는다. 요약 판정에는 영향 없음 (CHECK 8번)
-  for (const k of OPTIONAL_FIELD_KEYS) forced.delete(k);
-  // 등기부에서 부동산 표시(집합건물 표제부)를 하나도 찾지 못하면 "등기부등본에 없음"(불일치)으로 단정하지 않는다.
-  // 토지·일반건물 등기부는 표제부 모양이 달라 아직 자동으로 읽지 않는다 (CHECK 9번)
-  if (reg.properties.length === 0) {
-    for (const k of PROPERTY_KEYS) forced.set(k, { status: "needs_review", reason: "등기부등본에서 집합건물 표제부를 찾지 못했습니다. 토지·일반건물 등기부는 부동산 표시를 자동으로 대조하지 않으니 직접 확인해 주세요." });
+  const { picked, forced } = selectMortgages(reg, hwp);
+  const found = picked.filter(Boolean);
+  // 근저당권을 하나도 찾지 못하면 그 근저당권에 딸린 양도인·채무자·채권최고액은 대조할 수 없다
+  if (found.length === 0) {
+    for (const key of ["mortgagee", "debtor", "maxClaimAmount"] as const) forced.push({ key, status: "needs_review", reason: "등기부등본에서 해당 근저당권을 찾지 못함" });
+  } else if (found.length < picked.length) {
+    // 일부만 찾았으면 합계를 맞출 수 없다
+    forced.push({ key: "maxClaimAmount", status: "needs_review", reason: "이전할 근저당권 일부를 등기부등본에서 찾지 못해 합계를 대조할 수 없음" });
   }
-  const results = compareDocuments(hwp, registryToFields(reg, mortgage, transfer));
-
-  if (forced.size === 0) return results;
-  // 한글 서류 값을 읽지 못한 항목은 비교 결과(「읽지 못함」)를 그대로 두고, 나머지 강제 항목만 바꾼다
-  const replaceKeys = new Set([...forced.keys()].filter((k) => !hwpUnreadable(hwp, k)));
-  const kept = results.filter((r) => !replaceKeys.has(r.key));
+  // 등기부에서 집합건물 표제부를 찾지 못하면 "등기부등본에 없음"(불일치)으로 단정하지 않는다 (CHECK 9번)
+  if (reg.properties.length === 0) {
+    for (const key of PROPERTY_KEYS) forced.push({ key, status: "needs_review", reason: "등기부등본에서 집합건물 표제부를 찾지 못했습니다. 토지·일반건물 등기부는 부동산 표시를 자동으로 대조하지 않으니 직접 확인해 주세요." });
+  }
+  const results = compareDocuments(hwp, registryToFields(reg, picked));
+  const active = forced.filter((f) => !hwpUnreadable(hwp, f));
+  if (active.length === 0) return results;
+  // 강제 결과가 있는 항목(같은 key, index가 있으면 같은 index)의 비교 결과를 바꾼다
+  const hit = (r: FieldResult, f: Forced) => r.key === f.key && (f.index === undefined || r.index === f.index);
+  const kept = results.filter((r) => !active.some((f) => hit(r, f)));
+  const seen = new Set<string>();
   const replaced: FieldResult[] = [];
-  for (const [key, f] of forced) {
-    if (!replaceKeys.has(key)) continue;
+  for (const f of active) {
+    const id = `${f.key}:${f.index ?? ""}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
     replaced.push({
-      key,
-      group: FIELD_DEFINITIONS[key].group,
-      hwpValue: hwpValueOf(hwp, key),
+      key: f.key,
+      group: FIELD_DEFINITIONS[f.key].group,
+      hwpValue: hwpValueOf(hwp, f),
       registryValue: f.registryValue ?? null,
       status: f.status,
       reason: f.reason,
+      ...(f.index !== undefined ? { index: f.index } : {}),
     });
   }
   return [...kept, ...replaced];

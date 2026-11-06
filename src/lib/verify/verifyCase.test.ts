@@ -1,4 +1,4 @@
-// 근저당권·부기등기 찾기 규칙 시험 (DESIGN.md §4.3). 외부 서비스 없이 돈다.
+// 이전할 근저당권 찾기·대조 규칙 시험 (2026-11-06 양도증서 기준). 외부 서비스 없이 돈다.
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -11,157 +11,118 @@ import { verifyCase } from "./verifyCase";
 const o = (text: string | null, uncertain = false): OcrValue => ({ text, uncertain });
 const v = (value: string | null) => ({ value });
 
-const hwp = (): DocumentFields => ({
-  parties: { mortgagee: [v("가나다은행")], assignee: [v("라마바자산")], debtor: [v("김가명")], owner: [v("김가명")] },
-  properties: [{ location: v("서울특별시 강남구 역삼동"), lotNumber: v("123-4"), unitNumber: v("101호"), area: v("84.97㎡") }],
-  maxClaimAmount: v("금 120,000,000원"),
-  receiptNumber: v("제12345호"),
-  transferReceiptNumber: v("제67890호"),
-  registrationDate: v("2020년 3월 2일"),
-  transferRegistrationDate: v("2026년 11월 4일"),
+const hwp = (n: 1 | 2 = 1): DocumentFields => ({
+  parties: { mortgagee: [v("가나다보험주식회사")], debtor: [v("김가명")] },
+  properties: [{ location: v("경기도 성남시 분당구 서현동"), lotNumber: v("255-1"), unitNumber: v("제8층 제씨-809호"), area: v("80㎡") }],
+  mortgages: [
+    { receiptNumber: v("제14475호"), registrationDate: v("2020년03월13일"), rank: v("3") },
+    ...(n === 2 ? [{ receiptNumber: v("제2943호"), registrationDate: v("2022년01월19일"), rank: v("4") }] : []),
+  ],
+  maxClaimAmount: v(n === 2 ? "금 504,000,000원" : "금 300,000,000원"),
   mortgageeIdFront: v("110111"),
-  assigneeIdFront: v("110222"),
 });
 
 const mortgage = (over: Partial<RegistryMortgage> = {}): RegistryMortgage => ({
-  rank: "1",
-  receiptNumber: o("제12345호"),
-  registrationDate: o("2020년3월2일"),
-  maxClaimAmount: o("금 120,000,000원"),
+  rank: "3",
+  receiptNumber: o("제14475호"),
+  registrationDate: o("2020년3월13일"),
+  maxClaimAmount: o("금 300,000,000원"),
   debtors: [o("김가명")],
-  mortgagee: o("가나다은행"),
+  mortgagee: o("가나다보험주식회사"),
   mortgageeIdFront: o("110111"),
-  transfers: [{ rank: "1-1", receiptNumber: o("제67890호"), registrationDate: o("2026년11월4일"), assignee: o("라마바자산"), assigneeIdFront: o("110222") }],
+  transfers: [],
   ...over,
 });
+const second = () => mortgage({ rank: "4", receiptNumber: o("제2943호"), registrationDate: o("2022년1월19일"), maxClaimAmount: o("금 204,000,000원") });
 
 const reg = (mortgages: RegistryMortgage[]): RegistryRead => ({
-  properties: [{ location: o("서울특별시 강남구 역삼동"), lotNumber: o("123-4"), unitNumber: o("101호"), area: o("84.97㎡") }],
-  owners: [o("김가명")],
+  properties: [{ location: o("경기도 성남시 분당구 서현동"), lotNumber: o("255-1"), unitNumber: o("제8층 제씨-809호"), area: o("80㎡") }],
+  owners: [],
   mortgages,
 });
 
-const status = (rs: FieldResult[], key: string) => rs.filter((r) => r.key === key).map((r) => r.status);
+const status = (rs: FieldResult[], key: string, index?: number) =>
+  rs.filter((r) => r.key === key && (index === undefined || r.index === index)).map((r) => r.status);
 
-describe("verifyCase: 1단계 원 접수번호로 근저당권 찾기", () => {
-  it("근저당권 1건이면 그것과 대조 → 전부 일치", () => {
+describe("verifyCase: 이전할 근저당권 1건", () => {
+  it("등기부 근저당권 1건이면 그것과 대조 → 전부 일치", () => {
     expect(summarizeCase(verifyCase(hwp(), reg([mortgage()])))).toBe("all_match");
   });
 
-  it("근저당권 여러 건 중 접수번호가 같은 것을 골라 대조", () => {
-    const other = mortgage({ rank: "1", receiptNumber: o("제11111호"), maxClaimAmount: o("금 50,000,000원"), transfers: [] });
-    const rs = verifyCase(hwp(), reg([other, mortgage({ rank: "2" })]));
-    expect(summarizeCase(rs)).toBe("all_match");
+  it("여러 건 중 접수번호가 같은 것을 골라 대조", () => {
+    const other = mortgage({ rank: "1", receiptNumber: o("제111호"), maxClaimAmount: o("금 1원") });
+    expect(summarizeCase(verifyCase(hwp(), reg([other, mortgage()])))).toBe("all_match");
   });
 
-  it("여러 건인데 같은 접수번호가 없으면 원 접수번호 불일치, 딸린 항목은 확인 필요", () => {
-    const a = mortgage({ receiptNumber: o("제11111호") });
-    const b = mortgage({ receiptNumber: o("제22222호") });
-    const rs = verifyCase(hwp(), reg([a, b]));
+  it("여러 건인데 같은 접수번호가 없으면 접수번호 불일치", () => {
+    const rs = verifyCase(hwp(), reg([mortgage({ receiptNumber: o("제111호") }), mortgage({ receiptNumber: o("제222호") })]));
     expect(status(rs, "receiptNumber")).toEqual(["mismatch"]);
-    expect(rs.find((r) => r.key === "receiptNumber")?.registryValue).toBe("해당 접수번호 없음");
-    for (const k of ["mortgagee", "debtor", "maxClaimAmount", "registrationDate", "assignee", "transferReceiptNumber", "transferRegistrationDate"]) {
-      expect(status(rs, k), k).toEqual(["needs_review"]);
-    }
+    expect(status(rs, "debtor")).toEqual(["needs_review"]);
     expect(summarizeCase(rs)).toBe("mismatch_found");
   });
 
-  it("근저당권 1건이면 접수번호가 틀려도 그 건과 비교해 원 접수번호만 불일치", () => {
-    const h = hwp();
-    h.receiptNumber = v("제12346호");
-    const rs = verifyCase(h, reg([mortgage()]));
+  it("등기부 근저당권 1건인데 접수번호가 다르면 그 건과 비교해 불일치로 보여 준다", () => {
+    const rs = verifyCase(hwp(), reg([mortgage({ receiptNumber: o("제14476호") })]));
     expect(status(rs, "receiptNumber")).toEqual(["mismatch"]);
-    expect(status(rs, "maxClaimAmount")).toEqual(["match"]);
+    expect(status(rs, "rank")).toEqual(["match"]);
   });
 
-  it("같은 접수번호 근저당권이 2건이면 확인 필요", () => {
-    const rs = verifyCase(hwp(), reg([mortgage(), mortgage({ rank: "2" })]));
+  it("순위가 다르면 불일치", () => {
+    expect(status(verifyCase(hwp(), reg([mortgage({ rank: "2" })])), "rank")).toEqual(["mismatch"]);
+  });
+
+  it("등기부 접수번호를 확신할 수 없으면 확인 필요", () => {
+    const rs = verifyCase(hwp(), reg([mortgage({ receiptNumber: o("제14475호", true) }), mortgage({ receiptNumber: o("제222호") })]));
     expect(status(rs, "receiptNumber")).toEqual(["needs_review"]);
-    expect(summarizeCase(rs)).toBe("needs_review");
-  });
-
-  it("등기부에 근저당권이 없으면 불일치", () => {
-    const rs = verifyCase(hwp(), reg([]));
-    expect(status(rs, "receiptNumber")).toEqual(["mismatch"]);
-    expect(summarizeCase(rs)).toBe("mismatch_found");
-  });
-
-  it("한글 서류 원 접수번호를 못 읽고 근저당권이 여러 건이면: 원 접수번호 읽지 못함, 나머지 확인 필요", () => {
-    const h = hwp();
-    h.receiptNumber = v(null);
-    const rs = verifyCase(h, reg([mortgage({ receiptNumber: o("제11111호") }), mortgage()]));
-    expect(status(rs, "receiptNumber")).toEqual(["unreadable"]);
-    expect(status(rs, "maxClaimAmount")).toEqual(["needs_review"]);
-  });
-
-  it("등기부의 접수번호가 불확실하면 그 건으로 짝짓지 않는다", () => {
-    const rs = verifyCase(hwp(), reg([mortgage({ receiptNumber: o("제11111호") }), mortgage({ receiptNumber: o("제12345호", true) })]));
-    expect(summarizeCase(rs)).not.toBe("all_match");
-    // 확신 낮은 번호가 맞는 건일 수도 있으므로 「해당 접수번호 없음」(불일치)으로 단정하지 않는다
-    expect(status(rs, "receiptNumber")).toEqual(["needs_review"]);
-    expect(summarizeCase(rs)).toBe("needs_review");
-  });
-
-  it("등기부 접수번호가 모두 확실하게 읽혔는데 같은 번호가 없으면 불일치", () => {
-    const rs = verifyCase(hwp(), reg([mortgage({ receiptNumber: o("제11111호") }), mortgage({ receiptNumber: o("제22222호") })]));
-    expect(status(rs, "receiptNumber")).toEqual(["mismatch"]);
   });
 });
 
-describe("verifyCase: 2단계 이전 접수번호로 부기등기 찾기", () => {
-  it("근저당권이전 기록이 없으면 이전 접수번호·양수인·이전 등기날짜 모두 불일치", () => {
-    const rs = verifyCase(hwp(), reg([mortgage({ transfers: [] })]));
-    for (const k of ["assignee", "transferReceiptNumber", "transferRegistrationDate"]) {
-      expect(status(rs, k), k).toEqual(["mismatch"]);
-    }
-    // 등록번호 앞 6자리는 등기부 쪽 번호가 없으므로 대조하지 않는다 (CHECK 8번)
-    expect(status(rs, "assigneeIdFront")).toEqual([]);
-    expect(summarizeCase(rs)).toBe("mismatch_found");
+describe("verifyCase: 이전할 근저당권 2건", () => {
+  it("두 건을 각각 찾고 채권최고액은 합계로 대조 → 전부 일치", () => {
+    const rs = verifyCase(hwp(2), reg([second(), mortgage()]));
+    expect(summarizeCase(rs)).toBe("all_match");
+    expect(rs.find((r) => r.key === "maxClaimAmount")?.registryValue).toBe("금 504,000,000원");
   });
 
-  it("부기등기가 여러 건이면 이전 접수번호가 같은 것을 골라 대조", () => {
-    const m = mortgage({
-      transfers: [
-        { rank: "1-1", receiptNumber: o("제50000호"), registrationDate: o("2024년1월1일"), assignee: o("다른회사"), assigneeIdFront: o("110333") },
-        { rank: "1-2", receiptNumber: o("제67890호"), registrationDate: o("2026년11월4일"), assignee: o("라마바자산"), assigneeIdFront: o("110222") },
-      ],
-    });
+  it("합계가 다르면 채권최고액 불일치", () => {
+    const rs = verifyCase(hwp(2), reg([mortgage(), second()].map((m, i) => (i ? { ...m, maxClaimAmount: o("금 204,000,001원") } : m))));
+    expect(status(rs, "maxClaimAmount")).toEqual(["mismatch"]);
+  });
+
+  it("한 건을 찾지 못하면 그 건 접수번호 불일치, 합계는 확인 필요", () => {
+    const rs = verifyCase(hwp(2), reg([mortgage(), mortgage({ rank: "5", receiptNumber: o("제999호") })]));
+    expect(status(rs, "receiptNumber", 2)).toEqual(["mismatch"]);
+    expect(status(rs, "receiptNumber", 1)).toEqual(["match"]);
+    expect(status(rs, "maxClaimAmount")).toEqual(["needs_review"]);
+  });
+});
+
+describe("verifyCase: 양도인 = 지금 근저당권자", () => {
+  it("이전 기록이 있으면 마지막 양수인이 양도인", () => {
+    const m = mortgage({ mortgagee: o("옛은행"), mortgageeIdFront: o("120111"), transfers: [{ rank: "3-1", receiptNumber: o("제1호"), registrationDate: o("2021년1월1일"), assignee: o("가나다보험주식회사"), assigneeIdFront: o("110111") }] });
     expect(summarizeCase(verifyCase(hwp(), reg([m])))).toBe("all_match");
   });
 
-  it("부기등기 여러 건 중 같은 이전 접수번호가 없으면 이전 접수번호 불일치, 양수인·이전 날짜 확인 필요", () => {
-    const m = mortgage({
-      transfers: [
-        { rank: "1-1", receiptNumber: o("제50000호"), registrationDate: o("2024년1월1일"), assignee: o("A"), assigneeIdFront: o("110444") },
-        { rank: "1-2", receiptNumber: o("제50001호"), registrationDate: o("2025년1월1일"), assignee: o("B"), assigneeIdFront: o("110555") },
-      ],
-    });
-    const rs = verifyCase(hwp(), reg([m]));
-    expect(status(rs, "transferReceiptNumber")).toEqual(["mismatch"]);
-    expect(status(rs, "assignee")).toEqual(["needs_review"]);
-    expect(status(rs, "transferRegistrationDate")).toEqual(["needs_review"]);
+  it("이미 한국자산관리공사로 이전된 등기부여도 그 전 권리자를 양도인으로 본다", () => {
+    const m = mortgage({ transfers: [{ rank: "3-1", receiptNumber: o("제1호"), registrationDate: o("2026년11월1일"), assignee: o("한국자산관리공사"), assigneeIdFront: o("114671") }] });
+    expect(summarizeCase(verifyCase(hwp(), reg([m])))).toBe("all_match");
   });
 
-  it("글자가 불확실하게 읽힌 값은 확인 필요", () => {
-    const m = mortgage({ maxClaimAmount: o("금 120,000,000원", true) });
-    const rs = verifyCase(hwp(), reg([m]));
-    expect(status(rs, "maxClaimAmount")).toEqual(["needs_review"]);
+  it("양도인 이름이 다르면 불일치", () => {
+    expect(status(verifyCase(hwp(), reg([mortgage({ mortgagee: o("가나다생명주식회사") })])), "mortgagee")).toEqual(["mismatch"]);
   });
 });
 
-describe("등록번호 앞 6자리 (CHECK 8번)", () => {
-  it("근저당권을 고르지 못하면 등록번호 앞 6자리는 결과에 넣지 않는다", () => {
+describe("verifyCase: 등기부에 근저당권·표제부가 없을 때", () => {
+  it("근저당권이 없으면 접수번호 불일치, 딸린 항목 확인 필요", () => {
     const rs = verifyCase(hwp(), reg([]));
-    expect(rs.some((r) => r.key === "mortgageeIdFront" || r.key === "assigneeIdFront")).toBe(false);
+    expect(status(rs, "receiptNumber")).toEqual(["mismatch"]);
+    expect(status(rs, "mortgagee")).toEqual(["needs_review"]);
   });
-});
 
-describe("집합건물이 아닌 등기부 (CHECK 9번)", () => {
-  it("등기부에서 부동산 표시를 못 찾으면 부동산 항목은 「불일치」가 아니라 「확인 필요」", () => {
-    const rs = verifyCase(hwp(), { ...reg([mortgage()]), properties: [] });
-    for (const k of ["location", "lotNumber", "unitNumber", "area"]) {
-      expect(status(rs, k), k).toEqual(["needs_review"]);
-    }
-    expect(summarizeCase(rs)).toBe("needs_review");
+  it("집합건물 표제부를 못 찾으면 부동산 표시는 확인 필요", () => {
+    const r = reg([mortgage()]);
+    r.properties = [];
+    expect(status(verifyCase(hwp(), r), "location")).toEqual(["needs_review"]);
   });
 });

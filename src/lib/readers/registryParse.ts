@@ -57,6 +57,8 @@ function sectionOf(line: ParseLine): Section | null {
   if (fuzzyIncludes(t, "대지권의표시")) return "landRight";
   if (fuzzyIncludes(t, "소유권이외의권리")) return "eul";
   if (fuzzyIncludes(t, "소유권에관한사항")) return "gap";
+  // 갑구·을구 표의 머리줄. 구 제목을 잘못 읽어도 표제부에서 벗어났음을 안다 (표제부 표는 「표시번호」로 시작)
+  if (/^순위번호/.test(t) || fuzzyIncludes(t.slice(0, 6), "순위번호")) return "gap";
   return null;
 }
 
@@ -65,7 +67,9 @@ const RECEIPT_RE = /제\s*([\d/ ]{3,})\s*호/;
 // 주민·법인등록번호 (읽기 오류로 숫자가 '/'가 되기도 한다). 이 번호부터 줄 끝까지는 이름이 아니다.
 const ID_RE = /[\d/]{6}\s*-\s*[\d*/]{5,}/;
 const ADDRESS_LOT_RE = /(\S*(?:특별시|광역시|특별자치시|특별자치도|도)\s+(?:\S+\s+){0,3}?\S+[동리가])\s+(\d+(?:-\d+)?)(?=\s|$)/;
-const UNIT_RE = /(제\s*\d+\s*층\s*제\s*\d+\s*)(\S)/;
+// "층"은 "충·중·증"으로 잘못 읽히기 쉽다. 숫자 뒤 "층" 자리 글자이므로 같은 것으로 보고 "층"으로 적는다
+const UNIT_RE = /(제\s*\d+\s*[층충중증]\s*제\s*\d+\s*)(\S)/;
+const fixFloor = (s: string) => s.replace(/(\d\s*)[충중증]/g, "$1층");
 // 칸 제목: 글자 하나가 잘못 읽혀도 찾는다 (예: 근저탕권자, 재무자)
 // (근저당권자의 '근'이 '그'로 읽히거나 빠지는 경우도 있다. 값이 아니라 칸 제목만 느슨하게 찾는다)
 const HOLDER_KW = /(?:근\s*)?[저지처]\s*[가-힣]\s*권\s*자\s*/;
@@ -87,7 +91,7 @@ function valueFrom(line: ParseLine | undefined, raw: string | undefined, confMin
 const tidyName = (s: string) =>
   s
     .replace(/^[^\p{L}(]+/u, "")
-    .replace(/(\s+[ㄱ-ㆎ])+\s*$/u, "")
+    .replace(/(\s+[ㄱ-ㆎ]+)+\s*$/u, "") // 이름 뒤 떨어진 자모(체크 표시 자국 등 "ㄱㄱ")
     .replace(/[^\p{L}\p{N})]+$/u, "")
     .trim();
 
@@ -106,10 +110,15 @@ function nameAfter(lineText: string, keyword: RegExp): string | undefined {
  * "근저당권자 주식회사 가나다은행 110111-1087115" → 등록번호 앞 6자리 "110111".
  * 뒷자리는 돌려주지 않는다. 앞자리에 숫자가 아닌 글자(예: '/')가 섞이면 고치지 않고 불확실.
  */
-function idFrontAfter(line: ParseLine, keyword: RegExp, confMin: number): OcrValue {
+function idFrontAfter(line: ParseLine, keyword: RegExp, confMin: number, next?: ParseLine): OcrValue {
   const k = keyword.exec(line.text);
   if (!k) return v(null, false);
-  const id = ID_RE.exec(line.text.slice(k.index + k[0].length));
+  let id = ID_RE.exec(line.text.slice(k.index + k[0].length));
+  // 이름이 길면 등록번호가 다음 줄 맨 앞으로 넘어간다 (실제 스캔본, 2026-11-06)
+  if (!id && next && /^\s*[\d/]{6}\s*-/.test(next.text)) {
+    id = ID_RE.exec(next.text);
+    line = next;
+  }
   if (!id) return v(null, false);
   const front = id[0].split("-")[0].replace(/\s+/g, "").slice(0, 6);
   return v(front, !/^\d{6}$/.test(front) || valueConfidence(line, front) < confMin);
@@ -178,19 +187,21 @@ function amountValue(block: ParseLine[], confMin: number): OcrValue {
 }
 
 function parseMortgageBlock(block: ParseLine[], confMin: number): RegistryMortgage {
-  const rank = /^\s*(\d+)\s/.exec(block[0].text)?.[1] ?? "";
+  const rawRank = /^\s*(\d+)\s/.exec(block[0].text)?.[1] ?? "";
+  // 순위번호도 확신도가 낮으면 쓰지 않는다 (빈 값 → 「읽지 못함」)
+  const rank = rawRank && valueConfidence(block[0], rawRank) >= confMin ? rawRank : "";
   const debtors: OcrValue[] = [];
   let mortgagee: OcrValue = v(null, false);
   let mortgageeIdFront: OcrValue = v(null, false);
-  for (const line of block) {
+  block.forEach((line, i) => {
     const d = nameAfter(line.text, DEBTOR_KW);
     if (d) debtors.push(valueFrom(line, d, confMin));
     const m = nameAfter(line.text, HOLDER_KW);
     if (m && mortgagee.text === null) {
       mortgagee = valueFrom(line, m, confMin);
-      mortgageeIdFront = idFrontAfter(line, HOLDER_KW, confMin);
+      mortgageeIdFront = idFrontAfter(line, HOLDER_KW, confMin, block[i + 1]);
     }
-  }
+  });
   return {
     rank,
     receiptNumber: receiptValue(block, confMin),
@@ -207,11 +218,11 @@ function parseTransferBlock(block: ParseLine[], confMin: number): RegistryTransf
   const rank = /^\s*(\d+\s*-\s*\d+)/.exec(block[0].text)?.[1]?.replace(/\s+/g, "") ?? "";
   let assignee: OcrValue = v(null, false);
   let assigneeIdFront: OcrValue = v(null, false);
-  for (const line of block) {
-    const a = nameAfter(line.text, HOLDER_KW);
+  for (let i = 0; i < block.length; i++) {
+    const a = nameAfter(block[i].text, HOLDER_KW);
     if (a) {
-      assignee = valueFrom(line, a, confMin);
-      assigneeIdFront = idFrontAfter(line, HOLDER_KW, confMin);
+      assignee = valueFrom(block[i], a, confMin);
+      assigneeIdFront = idFrontAfter(block[i], HOLDER_KW, confMin, block[i + 1]);
       break;
     }
   }
@@ -238,8 +249,12 @@ function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[]
     const head = /^(\d+)-/.exec(rank)?.[1];
     return (head && mortgages.find((m) => m.rank === head)) || mortgages[mortgages.length - 1];
   };
-  for (const block of blocks(lines, (l) => isCancel(l) || isChange(l) || isTransfer(l) || isMortgage(l))) {
+  // 그 밖의 등기 줄(질권·가압류 등)의 첫 줄: 칸 사이 두 칸 띄움 + 접수 날짜·번호. 앞 근저당권 묶음에 섞이지 않게 끊는다
+  const isOtherRow = (l: ParseLine) => /\s{2}/.test(l.text) && DATE_RE.test(l.text) && RECEIPT_RE.test(l.text);
+  const isKnown = (l: ParseLine) => isCancel(l) || isChange(l) || isTransfer(l) || isMortgage(l);
+  for (const block of blocks(lines, (l) => isKnown(l) || isOtherRow(l))) {
     const first = block[0];
+    if (!isKnown(first)) continue;
     if (isCancel(first)) {
       const target = /(\d+)\s*번\s*근/.exec(first.text)?.[1];
       if (target) cancelled.add(target);
@@ -265,7 +280,8 @@ function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[]
 /** 표제부: 1동 건물의 소재지번, 전유부분의 건물번호·면적 */
 function parseProperties(header: ParseLine | undefined, building: ParseLine[], unit: ParseLine[], confMin: number): RegistryRead["properties"] {
   // 1동의 건물: 소재·지번 (건물명칭·도로명주소 빼기)
-  const lots = building.flatMap((line) => {
+  // 페이지마다 위에 찍힌 "[집합건물] …" 머리줄은 표 내용이 아니다
+  const lots = building.filter((line) => !/집합건물/.test(line.text)).flatMap((line) => {
     const m = ADDRESS_LOT_RE.exec(line.text);
     return m ? [{ location: valueFrom(line, m[1], confMin), lotNumber: valueFrom(line, m[2], confMin) }] : [];
   });
@@ -273,15 +289,18 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
   const units = unit.flatMap((line) => {
     const u = UNIT_RE.exec(line.text);
     if (!u) return [];
-    const area = /구조\s*([\d,]+(?:\.\d+)?)\s*([^\s\d]{0,3})/.exec(line.text);
-    const unitText = compact(u[1]).replace(/층제/, "층 제") + "호";
+    // 구조 이름(「…구조」「…라멘조」「벽돌조」 등) 바로 뒤의 숫자가 전유 면적
+    const area = /조\s*([\d,]+(?:\s*\.\s*\d+)?)\s*([^\s\d]{0,3})/.exec(line.text);
+    const unitText = fixFloor(compact(u[1])).replace(/층제/, "층 제") + "호";
     const unitOk = u[2] === "호";
-    const areaUnitOk = !!area && /^(㎡|m²|m2|ㅁ|ㅠ|ㅁㅠ|rf|nf)?$/.test(area[2]);
+    // 단위 기호(㎡)를 못 읽었으면 숫자 끝에 단위가 숫자로 잘못 붙었을 수 있다 (예: 49.98㎡ → "49.9811"). 그때는 확신하지 않는다
+    const areaUnitOk = !!area && /^(㎡|m²|m2|ㅁ|ㅠ|ㅁㅠ|rf|nf)$/.test(area[2]);
     return [
       {
-        unitNumber: unitOk ? valueFrom(line, unitText, confMin) : v(unitText, true),
+        unitNumber: unitOk ? v(unitText, valueConfidence(line, compact(u[1])) < confMin) : v(unitText, true),
         // 면적 단위 기호(㎡)는 'ㅁ', 'ㅠ'로 잘못 읽히기 쉬워 숫자만 쓰고 단위는 ㎡로 적는다
-        area: area ? { text: `${area[1]}㎡`, uncertain: !areaUnitOk || valueConfidence(line, area[1]) < confMin } : v(null, false),
+        // 소수 셋째 자리가 있으면 ㎡의 m을 숫자 1로 읽어 붙였을 수 있다 (예: 114.62㎡ → "114.621"). 고치지 않고 확신하지 않는다
+        area: area ? { text: `${area[1]}㎡`, uncertain: !areaUnitOk || /\.\s*\d{3,}/.test(area[1]) || valueConfidence(line, area[1]) < confMin } : v(null, false),
       },
     ];
   });
@@ -293,8 +312,8 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
   for (let i = 0; i < n; i++) {
     let unitNumber = units[i]?.unitNumber ?? v(null, false);
     if (unitNumber.uncertain && n === 1 && headerUnit && headerUnit[2] === "호") {
-      const h = compact(headerUnit[1]).replace(/층제/, "층 제") + "호";
-      if (valueConfidence(header!, h) >= confMin) unitNumber = v(h, false);
+      const h = fixFloor(compact(headerUnit[1])).replace(/층제/, "층 제") + "호";
+      if (valueConfidence(header!, compact(headerUnit[1])) >= confMin) unitNumber = v(h, false);
     }
     out.push({
       location: lots[i]?.location ?? v(null, false),
@@ -319,9 +338,12 @@ export function parseRegistryLines(lines: ParseLine[], confMin = DEFAULT_CONF_MI
     bySection[current].push(line);
   }
   const header = bySection.none.find((l) => /집합건물\]/.test(l.text) && UNIT_RE.test(l.text));
+  // 갑구·을구 제목 글자를 잘못 읽으면 줄이 엉뚱한 구역에 들어가므로, 근저당권은 표제부를 뺀 모든 줄에서 순서대로 찾는다
+  const rest = lines.filter((l) => !bySection.building.includes(l) && !bySection.land.includes(l) && !bySection.unit.includes(l) && !bySection.landRight.includes(l));
   return {
-    properties: parseProperties(header, bySection.building, bySection.unit, confMin),
+    // 전유부분 제목을 잘못 읽으면 건물번호 줄이 다른 표제부 구역에 들어간다. 머리줄을 뺀 표제부 줄 전체에서 찾는다
+    properties: parseProperties(header, bySection.building, [...bySection.unit, ...bySection.land, ...bySection.landRight].filter((l) => !/집합건물/.test(l.text)), confMin),
     owners: parseOwners(bySection.gap, confMin),
-    mortgages: parseMortgages(bySection.eul, confMin),
+    mortgages: parseMortgages(rest, confMin),
   };
 }
