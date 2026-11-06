@@ -195,34 +195,60 @@ export function glyphs(img: GrayImage, b: Box): Glyph[] {
 }
 
 /**
- * 면적 숫자 뒤에 붙은 단위 기호(m²)가 시작하는 x 위치. 못 찾으면 null.
+ * 면적 숫자 뒤에 붙은 단위 기호(m²)가 시작하는 x 위치 후보들 (앞의 것이 더 그럴듯함). 못 찾으면 빈 배열.
  * 등기부의 ㎡는 "m" 뒤에 작은 위첨자 "²"가 붙은 모양이라 글자 읽기가 "1"·"'"·"ㅁ" 등으로 잘못 읽는다.
  * - 맨 끝 덩어리가 줄 높이의 절반보다 작고 위쪽에 떠 있으면 위첨자 "²" → 그 앞 덩어리가 "m"
  * - 위첨자가 m에 붙어 한 덩어리면, 맨 끝 덩어리가 숫자들보다 눈에 띄게 넓으면 그것이 "m²"
+ * - 마지막 숫자가 m에 붙어 한 덩어리면(예: "2m", 2026-11-06 시험 서류·실제 스캔), 덩어리 안에서 나눈다:
+ *   숫자는 줄 위쪽까지 올라가고 m은 소문자 높이에서 시작하므로, 숫자 쪽에서 처음으로 위쪽에 잉크가 없는 세로줄이 m의 시작.
+ *   경계가 한두 점 어긋날 수 있어 조금 오른쪽 자리도 후보로 함께 돌려준다 (읽은 숫자가 맞는지는 부르는 쪽이 확인한다).
  */
-export function unitGlyphStart(img: GrayImage, b: Box): number | null {
+export function unitGlyphCuts(img: GrayImage, b: Box): number[] {
   const gs = glyphs(img, b).filter((g) => g.x1 - g.x0 >= 1 && g.y1 - g.y0 >= 2);
-  if (gs.length < 3) return null;
+  if (gs.length < 3) return [];
   const lineTop = Math.min(...gs.map((g) => g.y0));
   const lineBottom = Math.max(...gs.map((g) => g.y1));
   const h = lineBottom - lineTop;
   const last = gs[gs.length - 1];
   const raised = last.y1 - last.y0 < h * 0.5 && last.y1 < lineTop + h * 0.6;
+  // 숫자 덩어리 폭의 가운데값 (점 "."은 좁아서 뺀다)
+  const body = raised ? gs.slice(0, -2) : gs.slice(0, -1);
+  const widths = body.map((g) => g.x1 - g.x0).filter((w) => w > h * 0.25).sort((a, b) => a - b);
+  const median = widths.length ? widths[Math.floor(widths.length / 2)] : 0;
+  // 세로줄 x에 줄 위쪽(소문자 m보다 높은 곳) 잉크가 있는지
+  const highY = lineTop + Math.round(h * 0.3);
+  const tall = (x: number) => {
+    for (let y = lineTop; y < highY; y++) if (isDark(img, x, y)) return true;
+    return false;
+  };
+  /** 덩어리 g 안에서 숫자와 m을 나눈 자리 후보. 앞쪽이 숫자가 아니면(덩어리 전체가 단위) [g.x0] */
+  const split = (g: Glyph): number[] => {
+    if (!median || g.x1 - g.x0 <= median * 1.3) return [g.x0];
+    let digit = false;
+    for (let x = g.x0; x <= Math.min(g.x1, g.x0 + median); x++) if (tall(x)) digit = true;
+    if (!digit) return [g.x0];
+    for (let x = g.x0 + Math.round(median * 0.5); x <= g.x1; x++) {
+      if (tall(x)) continue;
+      const step = Math.max(1, Math.round(median * 0.1));
+      return [x, x + step, x + 2 * step].filter((c) => c < g.x1);
+    }
+    return [g.x0];
+  };
   if (raised) {
     // "m"은 획 사이 틈 때문에 여러 덩어리로 나뉘기도 한다. 숫자보다 키가 작은(소문자 높이) 덩어리는 m의 일부로 본다.
     // (소수점 "."은 아주 작아서 m의 일부로 보지 않는다)
     let k = gs.length - 2;
     const isLower = (g: Glyph) => g.y1 - g.y0 > h * 0.4 && g.y0 > lineTop + h * 0.2;
-    if (!isLower(gs[k])) return gs[k].x0;
+    if (!isLower(gs[k])) return split(gs[k]);
     while (k > 0 && isLower(gs[k - 1])) k--;
-    return gs[k].x0;
+    return [gs[k].x0];
   }
-  // 숫자 덩어리 폭의 가운데값과 비교 (점 "."은 좁아서 뺀다)
-  const widths = gs.slice(0, -1).map((g) => g.x1 - g.x0).filter((w) => w > h * 0.25).sort((a, b) => a - b);
-  if (!widths.length) return null;
-  const median = widths[Math.floor(widths.length / 2)];
-  return last.x1 - last.x0 > median * 1.3 ? last.x0 : null;
+  if (!median) return [];
+  return last.x1 - last.x0 > median * 1.3 ? split(last) : [];
 }
+
+/** 단위 기호 시작 자리의 가장 그럴듯한 후보 (없으면 null) */
+export const unitGlyphStart = (img: GrayImage, b: Box): number | null => unitGlyphCuts(img, b)[0] ?? null;
 
 /**
  * 칸 안의 손글씨(볼펜 동그라미·체크 표시 등)를 지운 흑백 사진을 돌려준다 (2026-11-06 사용자 요청: 필기는 무시).

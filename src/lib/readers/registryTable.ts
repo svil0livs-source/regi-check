@@ -8,7 +8,7 @@ import "server-only";
 import sharp from "sharp";
 import type { ParseLine } from "./registryParse";
 import { fuzzyIncludes } from "./registryParse";
-import { findGrid, hasInk, isStruck, unitGlyphStart, withoutHandwriting, type Box, type GrayImage } from "./tableGrid";
+import { findGrid, hasInk, isStruck, unitGlyphCuts, withoutHandwriting, type Box, type GrayImage } from "./tableGrid";
 import { recognizeImage, type OcrBoxLine, type RecognizeOptions } from "./tesseractOcr";
 
 const letters = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, "");
@@ -137,7 +137,7 @@ export async function readTablePage(
 }
 
 /**
- * 순위번호 칸: 원래 크기와 2배 크기로 두 번 읽어, 확신 있는 읽기의 숫자를 쓴다 (2026-11-06).
+ * 순위번호 칸: 원래 크기와 2배 크기로 두 번(둘 다 안 되면 옅은 회색을 날린 흑백으로 한 번 더) 읽어, 확신 있는 읽기의 숫자를 쓴다 (2026-11-06).
  * 손글씨를 지운 뒤에도 한 크기에서는 8을 6으로(확신도 0), 13을 135로 읽는 일이 있었다. 확신 있는 두 읽기가 다르면 비운다(→ 「읽지 못함」).
  */
 async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortSignal): Promise<BoxRead> {
@@ -152,6 +152,10 @@ async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortS
   const ok = (r: BoxRead) => /^\d+(-\d+)?$/.test(num(r)) && conf(r) >= 80;
   if (ok(a)) return a;
   if (ok(b)) return b;
+  // 볼펜 동그라미를 지운 뒤에도 옅은 테두리가 남아 "5"를 "56"·"00"으로 읽는 일이 있었다 (2026-11-06 시험 서류, 볼펜+기울어짐).
+  // 두 번 다 실패했을 때만, 옅은 회색(130보다 밝은 점)을 흰색으로 날린 흑백 사진으로 한 번 더 읽는다. 인쇄 숫자는 그보다 진해서 남는다.
+  const c = await readBox(page, gray, box, { ...fixed, prep: "bin", threshold: 130 }, signal, true, true, 1);
+  if (ok(c)) return c;
   return { lines: [], allStruck: a.allStruck && b.allStruck, toPage: b.toPage };
 }
 
@@ -173,10 +177,11 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
     const tail = line.wordBoxes.slice(i);
     const box = r.toPage({ x0: tail[0].x0, y0: Math.min(...tail.map((b) => b.y0)), x1: Math.max(...tail.map((b) => b.x1)), y1: Math.max(...tail.map((b) => b.y1)) });
     const pad = { x0: box.x0 - 4, y0: box.y0 - 6, x1: Math.min(gray.width, box.x1 + 30), y1: box.y1 + 6 };
-    const cut = unitGlyphStart(gray, pad);
-    if (cut === null || cut - pad.x0 < 20) continue;
-    const w = cut - 2 - pad.x0, h = pad.y1 - pad.y0;
-    const readDigits = async (scale: number) => {
+    const cuts = unitGlyphCuts(gray, pad).filter((c) => c - pad.x0 >= 20);
+    if (!cuts.length) continue;
+    const h = pad.y1 - pad.y0;
+    const readDigits = async (cut: number, scale: number) => {
+      const w = cut - 2 - pad.x0;
       let pipe = sharp(page).extract({ left: pad.x0, top: pad.y0, width: w, height: h }).greyscale();
       if (scale !== 1) pipe = pipe.resize({ width: Math.round(w * scale), kernel: "lanczos3" });
       pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
@@ -185,15 +190,24 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
       return { num, conf: Math.min(...digits.flatMap((d) => d.words.map((x) => x.confidence))) };
     };
     // 숫자만 다시 읽으면 Tesseract가 없는 숫자를 지어내기도 한다 (예: 깨끗한 "59.82"를 "5359.82"로, 2026-11-06 시험 서류).
-    // 처음 읽은 글자(단위 기호가 숫자로 붙은 것)의 앞부분과 맞을 때만 쓴다. 안 맞으면 2배로 한 번 더 읽고, 그래도 안 맞으면 쓰지 않는다.
+    // 처음 읽은 글자(단위 기호가 숫자로 붙은 것)의 앞부분과 맞을 때만 쓴다. 안 맞으면 2배로 한 번 더 읽고, 그래도 안 맞으면 다음 자르는 자리로, 다 안 맞으면 쓰지 않는다.
     const first = tail.length ? line.words.slice(i).map((x) => x.text).join("").replace(/[^\d.,]/g, "") : "";
-    // 단위 기호가 마지막 숫자에 붙어 있으면 자르는 자리가 숫자 안으로 들어가 끝 숫자가 잘린다 (예: 114.62 → "114.6", 2026-11-06 시험 서류).
+    // 자르는 자리가 숫자 안으로 들어가면 끝 숫자가 잘린다 (예: 114.62 → "114.6", 2026-11-06 시험 서류).
     // 처음 읽은 것보다 짧아졌는데 소수 둘째 자리가 없으면 잘린 것일 수 있어 쓰지 않는다 (→ 해석 단계가 확신하지 않음으로 둔다)
     const decimals = (n: string) => n.length - n.indexOf(".") - 1;
     const fits = (n: string) => /^\d[\d,]*\.\d+$/.test(n) && first.startsWith(n) && (n === first || decimals(n) >= 2);
-    let got = await readDigits(opts.scale / 1.5);
-    if (!fits(got.num)) got = await readDigits((opts.scale / 1.5) * 2);
-    if (!fits(got.num)) continue;
+    let got: { num: string; conf: number } | null = null;
+    for (const cut of cuts) {
+      for (const zoom of [1, 2]) {
+        const r = await readDigits(cut, (opts.scale / 1.5) * zoom);
+        if (fits(r.num)) {
+          got = r;
+          break;
+        }
+      }
+      if (got) break;
+    }
+    if (!got) continue;
     const { num, conf } = got;
     line.words.splice(i, line.words.length - i, { text: `${num}㎡`, confidence: conf });
     line.wordBoxes.splice(i);

@@ -1,6 +1,6 @@
 // 표 칸 찾기·취소선 찾기 시험 (2026-11-06). 그림을 직접 그려 시험한다.
 import { describe, expect, it } from "vitest";
-import { findGrid, isStruck, unitGlyphStart, withoutHandwriting, type GrayImage } from "./tableGrid";
+import { findGrid, isStruck, unitGlyphCuts, unitGlyphStart, withoutHandwriting, type GrayImage } from "./tableGrid";
 
 function blank(w: number, h: number): GrayImage {
   return { width: w, height: h, data: new Uint8Array(w * h).fill(255) };
@@ -74,6 +74,18 @@ describe("unitGlyphStart (면적 뒤 ㎡ 기호 찾기)", () => {
   };
   it("갈라진 m까지 포함해 단위 기호가 시작하는 곳을 찾는다", () => {
     expect(unitGlyphStart(draw(), { x0: 0, y0: 0, x1: 300, y1: 60 })).toBe(125);
+  });
+  it("끝 숫자가 m에 붙어 한 덩어리여도 숫자 뒤(m 시작)에서 자른다", () => {
+    const img = blank(300, 60);
+    for (const x of [10, 30, 50]) rect(img, x, 10, x + 12, 40);
+    rect(img, 70, 37, 73, 40); // 소수점
+    rect(img, 80, 10, 94, 40); // "6"
+    rect(img, 100, 10, 114, 40); // "2"
+    rect(img, 115, 20, 135, 40); // "m" (2에 붙음)
+    rect(img, 139, 10, 145, 19); // 위첨자 ²
+    const cuts = unitGlyphCuts(img, { x0: 0, y0: 0, x1: 300, y1: 60 });
+    expect(cuts[0]).toBe(115);
+    expect(cuts.every((c) => c >= 115 && c < 136)).toBe(true);
   });
   it("단위 기호가 없으면 null", () => {
     const img = blank(300, 60);
