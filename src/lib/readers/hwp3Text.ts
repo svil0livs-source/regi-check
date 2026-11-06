@@ -7,7 +7,8 @@
 // 특수 문자는 0x3400 + (KS 행-0xA1)×96 + (KS 열-0xA0)로 이어 붙인 번호다 (예: ① = KS A8E7 = 0x36E7, 한글로 저장한 시험 파일로 확인).
 // 서버 안에서만 읽고, 서류는 외부로 보내지 않는다. 결과 모양은 HWP 5.x 읽기(hwpText.ts)와 같다.
 
-import { inflateRawSync, inflateSync } from "node:zlib";
+import { Buffer } from "buffer";
+import { inflateAny } from "./inflate";
 import { HwpReadError } from "./hwpText";
 
 const SIGNATURE = "HWP Document File V3.00";
@@ -239,16 +240,12 @@ export function readHwp3Paragraphs(file: Buffer | Uint8Array): string[] {
   if (info.readUInt16LE(96) !== 0) throw new HwpReadError("암호가 걸린 한글 파일은 읽을 수 없습니다.");
   const compressed = info[124] !== 0;
   const infoBlockLen = info.readUInt16LE(126);
-  let body = buf.subarray(head + DOC_INFO_LEN + SUMMARY_LEN + infoBlockLen);
+  let body: Buffer = buf.subarray(head + DOC_INFO_LEN + SUMMARY_LEN + infoBlockLen);
   if (compressed) {
     try {
-      body = inflateRawSync(body);
+      body = inflateAny(body);
     } catch {
-      try {
-        body = inflateSync(body);
-      } catch {
-        throw new HwpReadError("한글 파일 본문이 손상돼 읽을 수 없습니다. 한글에서 다시 저장해 올려 주세요.");
-      }
+      throw new HwpReadError("한글 파일 본문이 손상돼 읽을 수 없습니다. 한글에서 다시 저장해 올려 주세요.");
     }
   }
 

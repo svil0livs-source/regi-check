@@ -1,6 +1,6 @@
 // 업로드 검사 규칙 시험 (DESIGN.md §3.1)
 import { describe, expect, it } from "vitest";
-import { checkFolders, MAX_CASE_BYTES, MAX_FILE_BYTES } from "./checkFolders";
+import { checkFolders, MAX_FILE_BYTES, pairByName } from "./checkFolders";
 
 const f = (path: string, size = 1000) => ({ path, size });
 
@@ -29,14 +29,10 @@ describe("checkFolders", () => {
     expect(r.cases.find((c) => c.folder === "B")?.ok).toBe(true);
   });
 
-  it("한글 파일이 2개면 초과", () => {
-    const r = checkFolders([f("A/a.hwp"), f("A/b.hwp"), f("A/a.pdf")]);
-    expect(r.cases[0].reasons).toContain("한글 파일이 2개");
-  });
-
-  it("다른 파일이 섞여 있으면 문제", () => {
-    const r = checkFolders([f("A/a.hwp"), f("A/a.pdf"), f("A/메모.txt")]);
-    expect(r.cases[0].reasons).toContain("다른 파일이 들어 있음");
+  it("한글·PDF가 아닌 파일은 무시 (2026-11-06)", () => {
+    const r = checkFolders([f("A/a.hwp"), f("A/a.pdf"), f("A/메모.txt"), f("A/사진.jpg")]);
+    expect(r.cases).toHaveLength(1);
+    expect(r.cases[0].ok).toBe(true);
   });
 
   it("Thumbs.db, desktop.ini, 숨김 파일은 무시", () => {
@@ -44,25 +40,18 @@ describe("checkFolders", () => {
     expect(r.cases[0].ok).toBe(true);
   });
 
-  it(".hwpx(신버전 한글)도 받고, .hwp와 함께 있으면 한글 파일 2개로 본다", () => {
+  it(".hwpx(신버전 한글)도 받는다", () => {
     const r = checkFolders([f("A/a.hwpx"), f("A/a.pdf")]);
     expect(r.cases[0].ok).toBe(true);
     expect(r.cases[0].hwpPath).toBe("A/a.hwpx");
-    const two = checkFolders([f("B/a.hwpx"), f("B/a.hwp"), f("B/a.pdf")]);
-    expect(two.cases[0].reasons).toContain("한글 파일이 2개");
   });
 
-  it("한 건의 두 파일 합계가 4.3MB를 넘으면 문제 (배포본 요청 한도)", () => {
-    const r = checkFolders([f("A/a.hwp", 1024 * 1024), f("A/a.pdf", MAX_CASE_BYTES)]);
-    expect(r.cases[0].ok).toBe(false);
-    expect(r.cases[0].reasons.join(" ")).toContain("합계");
-    const ok = checkFolders([f("B/b.hwp", 100 * 1024), f("B/b.pdf", 3 * 1024 * 1024)]);
+  it("한 건 합계 제한은 없고, 파일 하나가 6000KB를 넘으면 문제 (2026-11-06)", () => {
+    const ok = checkFolders([f("A/a.hwp", MAX_FILE_BYTES), f("A/a.pdf", MAX_FILE_BYTES)]);
     expect(ok.cases[0].ok).toBe(true);
-  });
-
-  it("20MB 초과 파일이 있으면 문제", () => {
-    const r = checkFolders([f("A/a.hwp"), f("A/a.pdf", MAX_FILE_BYTES + 1)]);
-    expect(r.cases[0].reasons).toContain("20MB 초과: a.pdf");
+    const r = checkFolders([f("B/b.hwp"), f("B/b.pdf", MAX_FILE_BYTES + 1)]);
+    expect(r.cases[0].reasons).toContain("6000KB 초과: b.pdf");
+    expect(MAX_FILE_BYTES).toBe(6000 * 1024);
   });
 
   it("같은 이름 폴더가 두 군데 있으면 둘 다 문제", () => {
@@ -71,11 +60,79 @@ describe("checkFolders", () => {
     expect(r.cases.every((c) => !c.ok && c.reasons.includes("같은 이름 폴더가 있음"))).toBe(true);
   });
 
+  it("한 폴더에 여러 건: 파일 이름의 같은 값(채무자 이름)으로 짝짓는다", () => {
+    const r = checkFolders([
+      f("묶음/근저당권이전_홍길동.hwp"),
+      f("묶음/근저당권이전_김철수.hwpx"),
+      f("묶음/등기부_김철수.pdf"),
+      f("묶음/등기부_홍길동.pdf"),
+    ]);
+    expect(r.cases).toHaveLength(2);
+    expect(r.cases.every((c) => c.ok)).toBe(true);
+    const hong = r.cases.find((c) => c.hwpPath === "묶음/근저당권이전_홍길동.hwp");
+    expect(hong).toMatchObject({ folder: "묶음 / 근저당권이전_홍길동", pdfPath: "묶음/등기부_홍길동.pdf" });
+    expect(r.cases.find((c) => c.hwpPath?.endsWith("김철수.hwpx"))?.pdfPath).toBe("묶음/등기부_김철수.pdf");
+  });
+
+  it("구분 기호 없이 붙어 있어도, 성이 같아도 이름 전체로 짝짓는다", () => {
+    const r = checkFolders([f("A/김철수신청서.hwp"), f("A/김영희신청서.hwp"), f("A/김영희등기부.pdf"), f("A/김철수등기부.pdf")]);
+    expect(r.cases.find((c) => c.hwpPath === "A/김철수신청서.hwp")?.pdfPath).toBe("A/김철수등기부.pdf");
+    expect(r.cases.find((c) => c.hwpPath === "A/김영희신청서.hwp")?.pdfPath).toBe("A/김영희등기부.pdf");
+  });
+
+  it("등기부 하나에 한글 파일 여러 개가 짝지어질 수 있다", () => {
+    const r = checkFolders([f("A/홍길동_1번.hwp"), f("A/홍길동_2번.hwp"), f("A/홍길동_등기부.pdf"), f("A/김철수_등기부.pdf"), f("A/김철수.hwp")]);
+    expect(r.cases.filter((c) => c.pdfPath === "A/홍길동_등기부.pdf")).toHaveLength(2);
+    expect(r.cases.every((c) => c.ok)).toBe(true);
+  });
+
+  it("짝을 못 찾은 한글 파일과 짝 없는 PDF는 「파일 부족/초과」로 따로 한 줄씩", () => {
+    const r = checkFolders([f("A/홍길동.hwp"), f("A/김철수.hwp"), f("A/홍길동.pdf"), f("A/이영희.pdf")]);
+    expect(r.cases.find((c) => c.hwpPath === "A/홍길동.hwp")?.ok).toBe(true);
+    const kim = r.cases.find((c) => c.id === "A/김철수.hwp");
+    expect(kim?.ok).toBe(false);
+    expect(kim?.reasons[0]).toContain("같은 값이 들어 있는 등기부등본 PDF 없음");
+    const orphan = r.cases.find((c) => c.id === "A/이영희.pdf");
+    expect(orphan).toMatchObject({ ok: false, folder: "A / 이영희.pdf", reasons: ["짝이 되는 한글 파일 없음: 이영희.pdf"] });
+  });
+
+  it("짝이 하나로 정해지지 않으면 추측하지 않는다", () => {
+    const r = checkFolders([f("A/홍길동.hwp"), f("A/김철수.hwp"), f("A/홍길동_건물.pdf"), f("A/홍길동_토지.pdf")]);
+    const hong = r.cases.find((c) => c.id === "A/홍길동.hwp");
+    expect(hong?.ok).toBe(false);
+    expect(hong?.reasons[0]).toContain("여러 개");
+  });
+
+  it("모든 파일 이름에 들어 있는 말(근저당권 등)로는 짝짓지 않는다", () => {
+    const p = pairByName(
+      [{ name: "근저당권_가.hwp", path: "A/근저당권_가.hwp", size: 1 }, { name: "근저당권_나.hwp", path: "A/근저당권_나.hwp", size: 1 }],
+      [{ name: "근저당권_등기부.pdf", path: "A/근저당권_등기부.pdf", size: 1 }],
+    );
+    expect(p.pairs.size).toBe(0);
+    expect(p.orphanPdfs).toEqual(["A/근저당권_등기부.pdf"]);
+  });
+
+  it("번호가 이름이면 번호 전체로 짝짓는다 (1과 10을 섞지 않음)", () => {
+    const r = checkFolders([f("A/1.hwp"), f("A/10.hwp"), f("A/10.pdf"), f("A/1.pdf")]);
+    expect(r.cases.find((c) => c.id === "A/1.hwp")?.pdfPath).toBe("A/1.pdf");
+    expect(r.cases.find((c) => c.id === "A/10.hwp")?.pdfPath).toBe("A/10.pdf");
+  });
+
+  it("맥에서 고른 파일 이름(자모 분리)도 짝짓는다", () => {
+    const r = checkFolders([f("A/홍길동.hwp".normalize("NFD")), f("A/김철수.hwp"), f("A/홍길동.pdf"), f("A/김철수.pdf")]);
+    expect(r.cases.every((c) => c.ok)).toBe(true);
+  });
+
   it("31건이면 아무것도 처리하지 않고 안내", () => {
     const entries = Array.from({ length: 31 }, (_, i) => [f(`c${i}/a.hwp`), f(`c${i}/a.pdf`)]).flat();
     const r = checkFolders(entries);
     expect(r.cases).toEqual([]);
     expect(r.blockingError).toContain("30건");
+  });
+
+  it("30건은 한글 파일 수로 센다 (한 폴더에 여러 건)", () => {
+    const entries = Array.from({ length: 31 }, (_, i) => [f(`A/건${i}번.hwp`), f(`A/건${i}번.pdf`)]).flat();
+    expect(checkFolders(entries).blockingError).toContain("30건");
   });
 
   it("30건까지는 받는다", () => {

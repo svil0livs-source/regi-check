@@ -4,7 +4,8 @@
 // 문단은 <hp:p>, 글자는 그 안의 <hp:t>에 들어 있다. 표 칸 문단은 <hp:tbl>…<hp:tc>…<hp:p>로 겹쳐 들어간다.
 // 서버 안에서만 읽고, 서류는 외부로 보내지 않는다. 결과 모양은 HWP 5.x 읽기(hwpText.ts)와 같다.
 
-import { inflateRawSync } from "node:zlib";
+import { Buffer } from "buffer";
+import { inflateRaw } from "./inflate";
 import { HwpReadError } from "./hwpText";
 
 const ZIP_LOCAL = 0x04034b50;
@@ -48,7 +49,7 @@ function readZip(buf: Buffer): Map<string, Buffer> {
     if (method === 0) out.set(name, data);
     else if (method === 8) {
       try {
-        out.set(name, inflateRawSync(data));
+        out.set(name, inflateRaw(data));
       } catch {
         throw bad();
       }

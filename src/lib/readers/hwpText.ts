@@ -4,7 +4,8 @@
 // 각 Section은 (대개 압축된) 레코드 목록이다. 문단 글자는 PARA_TEXT 레코드(태그 67)에 UTF-16으로 들어 있다.
 
 import CFB from "cfb";
-import { inflateRawSync } from "node:zlib";
+import { Buffer } from "buffer";
+import { inflateRaw } from "./inflate";
 
 const HWPTAG_PARA_TEXT = 67; // HWPTAG_BEGIN(16) + 51
 
@@ -87,7 +88,7 @@ export function readHwpParagraphs(file: Buffer | Uint8Array): string[] {
     if (!raw) break;
     let data: Buffer;
     try {
-      data = compressed ? inflateRawSync(raw) : raw;
+      data = compressed ? inflateRaw(raw) : raw;
     } catch {
       // 압축이 깨진 파일: "알 수 없는 오류" 대신 이유를 알린다 (CHECK 15번)
       throw new HwpReadError("한글 파일 본문이 손상돼 읽을 수 없습니다. 한글에서 다시 저장해 올려 주세요.");

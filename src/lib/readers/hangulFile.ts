@@ -3,6 +3,7 @@
 //   .hwp  — 한글 2002 이후(HWP 5.x 묶음 파일) 또는 한글 97 이하(HWP 3.0)
 //   .hwpx — 한글 2010 이후 신버전(ZIP 묶음)
 //   .hml  — 한글 XML 문서(HWPML 2.x)
+import { Buffer } from "buffer";
 import { readHwp3Paragraphs, isHwp3 } from "./hwp3Text";
 import { HwpReadError, readHwpParagraphs } from "./hwpText";
 import { isHml, isZip, readHmlParagraphs, readHwpxParagraphs } from "./hwpxText";
@@ -12,7 +13,10 @@ const CFB_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe
 const isHwp5 = (b: Buffer) => b.subarray(0, 8).equals(CFB_SIGNATURE);
 
 /** 한글 파일인지 (어떤 형식이든) */
-export const isHangulFile = (b: Buffer) => isHwp5(b) || isHwp3(b) || isZip(b) || isHml(b);
+export const isHangulFile = (file: Buffer | Uint8Array) => {
+  const b = Buffer.from(file.buffer, file.byteOffset, file.byteLength);
+  return isHwp5(b) || isHwp3(b) || isZip(b) || isHml(b);
+};
 
 /** 한글 파일(구버전·신버전 모두)을 받아 본문 글자를 문단마다 한 줄씩 돌려준다 */
 export function readHangulParagraphs(file: Buffer | Uint8Array): string[] {
