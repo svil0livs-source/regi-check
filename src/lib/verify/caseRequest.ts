@@ -1,5 +1,5 @@
 // Design Ref: DESIGN.md §4.1 — 건 하나의 요청 모양 (브라우저 ↔ 서버, 2026-11-06).
-// 파일당 6000KB까지 받으려고 원본 파일을 통째로 보내지 않는다(배포본 요청 한도 약 4.5MB).
+// 원본 파일을 통째로 보내지 않는다(배포본 요청 한도 약 4.5MB).
 //   - 한글 파일: 브라우저가 읽어 대조 항목 값만 보낸다 (fields, JSON)
 //   - 등기부 PDF: 브라우저가 페이지 사진 후보만 꺼내 보낸다 (images, 각 사진의 사전 + 자료)
 // 서버는 받은 값을 그대로 믿지 않고 모양을 엄격히 검사한다. 검사에 실패하면 null.
@@ -11,6 +11,8 @@ import { PARTY_ROLES, PROPERTY_FIELD_KEYS, type DocumentFields, type ExtractedVa
 export const MAX_REQUEST_BYTES = Math.floor(4.3 * 1024 * 1024);
 /** 페이지 사진 후보 최대 개수 */
 export const MAX_IMAGES = 200;
+/** 페이지 번호의 최대값 (파일 크기 한도를 없앴으므로 넉넉히, 2026-11-06) */
+export const MAX_PAGES = 5000;
 /** 값 하나의 최대 길이 (주소도 이보다 길지 않다) */
 const MAX_VALUE_CHARS = 500;
 /** 여러 명·여러 개의 최대 개수 */
@@ -100,7 +102,7 @@ export function parseImageMeta(json: string): ImageMeta[] | null {
   if (!Array.isArray(raw) || raw.length > MAX_IMAGES) return null;
   const out: ImageMeta[] = [];
   for (const m of raw) {
-    if (!isObj(m) || !Number.isInteger(m.page) || (m.page as number) < 0 || (m.page as number) >= MAX_IMAGES) return null;
+    if (!isObj(m) || !Number.isInteger(m.page) || (m.page as number) < 0 || (m.page as number) >= MAX_PAGES) return null;
     if (typeof m.dict !== "string" || m.dict.length > MAX_DICT_CHARS || !/\/Subtype\s*\/Image/.test(m.dict)) return null;
     out.push({ page: m.page as number, dict: m.dict });
   }

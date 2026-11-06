@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MAX_REQUEST_BYTES, parseDocumentFields, parseImageMeta } from "@/lib/verify/caseRequest";
 import type { PageImageObject } from "@/lib/readers/pdfPages";
 import { prepareCase } from "./prepareCase";
+import { PAGE_ROOM, readBody } from "./readRequests";
 
 /** 한글 XML 문서(.hml): 문단마다 한 줄 */
 const hml = (lines: string[]) =>
@@ -26,40 +27,44 @@ function pdf(imageBytes: number): Blob {
 
 describe("prepareCase", () => {
   it("한글 파일은 대조 항목 값만, 등록번호는 앞 6자리만 보낸다. 서버가 그 값을 그대로 받는다", async () => {
-    const r = await prepareCase("2026-0001", HWP, pdf(1000));
+    const r = await prepareCase(HWP, pdf(1000));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const fields = String(r.body.get("fields"));
+    const fields = r.fields;
     expect(fields).not.toContain("1234567");
     const parsed = parseDocumentFields(fields);
     expect(parsed?.mortgageeIdFront.value).toBe("110111");
     expect(parsed?.parties.mortgagee[0].value).toBe("주식회사 가나은행");
-    const meta = parseImageMeta(String(r.body.get("images")));
+    const body = readBody("2026-0001", r.images, { pass: 0, chunk: 0, last: true });
+    const meta = parseImageMeta(String(body.get("images")));
     expect(meta).toHaveLength(1);
-    expect((r.body.get("img0") as Blob).size).toBe(1000);
+    expect((body.get("img0") as Blob).size).toBe(1000);
     expect(r.reencoded).toBe(false);
   });
 
-  it("사진이 요청 한도를 넘으면 줄여서 보낸다", async () => {
+  it("페이지 하나가 한 요청에 안 들어갈 때만 줄인다", async () => {
     const reencode = vi.fn(async (o: PageImageObject) => ({ ...o, dict: o.dict.replace("DeviceRGB", "DeviceGray"), data: new Uint8Array(1000) }));
-    const r = await prepareCase("A", HWP, pdf(MAX_REQUEST_BYTES + 1));
+    const fits = await prepareCase(HWP, pdf(PAGE_ROOM - 1000), reencode);
+    expect(fits.ok && fits.reencoded).toBe(false);
+    expect(reencode).not.toHaveBeenCalled();
+    const r = await prepareCase(HWP, pdf(MAX_REQUEST_BYTES + 1));
     expect(r).toMatchObject({ ok: false, summary: "file_problem" });
-    const shrunk = await prepareCase("A", HWP, pdf(MAX_REQUEST_BYTES + 1), reencode);
+    const shrunk = await prepareCase(HWP, pdf(MAX_REQUEST_BYTES + 1), reencode);
     expect(shrunk.ok && shrunk.reencoded).toBe(true);
-    if (shrunk.ok) expect((shrunk.body.get("img0") as Blob).size).toBe(1000);
+    if (shrunk.ok) expect(shrunk.images[0].data.byteLength).toBe(1000);
   });
 
   it("한글 파일·PDF 형식이 아니면 처리 실패로 이유를 알린다", async () => {
-    expect(await prepareCase("A", new Blob(["hello"]), pdf(10))).toMatchObject({ ok: false, summary: "processing_failed", error: expect.stringContaining("한글 파일 형식") });
-    expect(await prepareCase("A", HWP, new Blob(["hello"]))).toMatchObject({ ok: false, error: expect.stringContaining("PDF 형식") });
+    expect(await prepareCase(new Blob(["hello"]), pdf(10))).toMatchObject({ ok: false, summary: "processing_failed", error: expect.stringContaining("한글 파일 형식") });
+    expect(await prepareCase(HWP, new Blob(["hello"]))).toMatchObject({ ok: false, error: expect.stringContaining("PDF 형식") });
   });
 });
 
 describe("parseDocumentFields", () => {
   it("모양이 틀리거나 등록번호 뒷자리가 섞이면 받지 않는다", async () => {
-    const r = await prepareCase("A", HWP, pdf(10));
+    const r = await prepareCase(HWP, pdf(10));
     if (!r.ok) throw new Error("준비 실패");
-    const good = JSON.parse(String(r.body.get("fields")));
+    const good = JSON.parse(r.fields);
     expect(parseDocumentFields(JSON.stringify({ ...good, mortgageeIdFront: { value: "1101111234567" } }))).toBeNull();
     expect(parseDocumentFields(JSON.stringify({ ...good, properties: "x" }))).toBeNull();
     expect(parseDocumentFields("not json")).toBeNull();

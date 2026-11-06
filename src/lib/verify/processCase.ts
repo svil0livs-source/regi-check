@@ -1,5 +1,5 @@
 // Design Ref: DESIGN.md §4.1 — 건 하나를 처리한다: 등기부 읽기 → 근저당권 찾기 → 대조 → 요약. (PLAN 10번)
-// 2026-11-06: 한글 파일은 브라우저가 읽어 대조 항목 값만 보낸다(파일당 6000KB까지 받기 위해). 여기서는 등기부만 읽는다.
+// 2026-11-06: 한글 파일은 브라우저가 읽어 대조 항목 값만 보낸다(요청 한도 때문에). 여기서는 등기부만 읽는다.
 // 서버에서만 쓴다. 읽은 원문은 결과에 넣지 않고 로그에도 남기지 않는다.
 import "server-only";
 
@@ -8,6 +8,7 @@ import type { PageImageObject } from "@/lib/readers/pdfPages";
 import { RegistryReadError, type RegistryRead } from "@/lib/readers/registryOcr";
 import { combineReads, readRegistryObjects, readRegistryPass } from "@/lib/readers/registryRead";
 import type { CaseSummary, DocumentFields, FieldResult } from "@/types/verification";
+import { CarryKeyMissing, openCarry, sealCarry } from "./readCarry";
 import { verifyCase } from "./verifyCase";
 
 export interface CaseOutcome {
@@ -38,16 +39,39 @@ export async function processCase(
   }
 }
 
-/** 읽기 한 번의 결과 (브라우저가 모았다가 대조 요청에 함께 보낸다) */
-export type PassOutcome = { ok: true; read: RegistryRead; total: number } | { ok: false; outcome: CaseOutcome };
+/**
+ * 읽기 한 조각의 결과 (브라우저가 모았다가 대조 요청에 함께 보낸다).
+ * 큰 등기부를 나눠 보낼 때 마지막 조각이 아니면 read 대신 암호화된 이어 읽기 꾸러미(carry)를 돌려준다.
+ */
+export type PassOutcome =
+  | { ok: true; read: RegistryRead; total: number }
+  | { ok: true; carry: string }
+  | { ok: false; outcome: CaseOutcome };
 
-/** 등기부를 index번째 설정으로 한 번만 읽는다 (2026-11-06: 요청마다 300초 한도 안에 끝나도록 나눔) */
-export async function readCasePass(folder: string, images: PageImageObject[], index: number, signal?: AbortSignal): Promise<PassOutcome> {
+/** 이번 요청이 몇 번째 읽기의 몇 번째 조각인지 */
+export interface PassPosition {
+  pass: number;
+  chunk: number;
+  last: boolean;
+  /** 앞 조각이 돌려준 꾸러미 (첫 조각이면 없음) */
+  carry?: string;
+}
+
+/** 등기부를 pass번째 설정으로 한 번 읽는다 (2026-11-06: 요청마다 300초 한도 안에 끝나도록, 큰 파일은 조각으로 나눔) */
+export async function readCasePass(folder: string, images: PageImageObject[], at: PassPosition, signal?: AbortSignal): Promise<PassOutcome> {
   const fail = (error: string): PassOutcome => ({ ok: false, outcome: { folder, summary: "processing_failed", results: [], error } });
   try {
-    return { ok: true, ...(await readRegistryPass(images, index, signal)) };
+    let carry = null;
+    if (at.chunk > 0) {
+      carry = at.carry ? openCarry(at.carry, { folder, pass: at.pass, chunk: at.chunk }) : null;
+      if (!carry) return fail("나눠 읽던 등기부의 앞부분 정보가 맞지 않거나 시간이 지났습니다. 같은 폴더를 다시 골라 처리해 주세요.");
+    }
+    const r = await readRegistryPass(images, at.pass, signal, { carry, last: at.last });
+    if (r.done) return { ok: true, read: r.read, total: r.total };
+    return { ok: true, carry: sealCarry(r.carry, { folder, pass: at.pass, chunk: at.chunk + 1 }) };
   } catch (err) {
     if (err instanceof RegistryReadError) return fail(err.message);
+    if (err instanceof CarryKeyMissing) return fail("서버 설정(READ_CARRY_KEY)이 없어 큰 등기부를 나눠 읽을 수 없습니다. 관리자에게 알려 주세요.");
     if ((err as Error)?.name === "AbortError") return fail("처리가 취소됐습니다.");
     console.error(`[verify] 읽기 실패: ${(err as Error)?.name ?? "Error"}`);
     return fail("처리 중 알 수 없는 오류가 났습니다.");
