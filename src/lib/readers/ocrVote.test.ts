@@ -117,3 +117,23 @@ describe("voteNameList (이름 목록은 이름마다 다수결)", () => {
     expect(voteNameList([[n("가나다")], [n("가나다")], [n("가나다"), n("주식회사 예시개발")]])).toEqual([n("가나다")]);
   });
 });
+
+describe("순위번호 다수결 (2026-11-06)", () => {
+  const m = (rank: string) => ({
+    rank,
+    receiptNumber: { text: "제1호", uncertain: false },
+    registrationDate: { text: "2020년1월1일", uncertain: false },
+    maxClaimAmount: { text: "금 1원", uncertain: false },
+    debtors: [],
+    mortgagee: { text: "가", uncertain: false },
+    mortgageeIdFront: { text: null, uncertain: false },
+    transfers: [],
+  });
+  const read = (rank: string) => ({ properties: [], owners: [], mortgages: [m(rank)] });
+  it("과반이 같게 읽은 순위를 쓴다 (첫 읽기가 틀려도)", () => {
+    expect(voteRegistryReads([read("7"), read("8"), read("8")]).mortgages[0].rank).toBe("8");
+  });
+  it("과반이 없으면 빈 값(읽지 못함)", () => {
+    expect(voteRegistryReads([read("7"), read("8"), read("")]).mortgages[0].rank).toBe("");
+  });
+});

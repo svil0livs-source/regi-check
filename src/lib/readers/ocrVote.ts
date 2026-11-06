@@ -112,7 +112,7 @@ export function voteNameList(lists: OcrValue[][]): OcrValue[] {
 
 function voteTransfer(items: RegistryTransfer[]): RegistryTransfer {
   return {
-    rank: items[0].rank,
+    rank: voteRank(items.map((t) => t.rank)),
     receiptNumber: voteValue(items.map((t) => t.receiptNumber)),
     registrationDate: voteValue(items.map((t) => t.registrationDate)),
     assignee: voteValue(items.map((t) => t.assignee)),
@@ -127,9 +127,20 @@ const unsureTransfer = (t: RegistryTransfer): RegistryTransfer => ({
   assigneeIdFront: unsure(t.assigneeIdFront),
 });
 
+/**
+ * 순위번호 다수결: 과반이 같게 읽어야 쓰고, 아니면 빈 값(읽지 못함 → 「확인 필요」).
+ * (2026-11-06 실제 스캔본: 손으로 그린 동그라미 때문에 8을 7로 읽은 읽기가 섞였다)
+ */
+function voteRank(ranks: string[]): string {
+  const count = new Map<string, number>();
+  for (const r of ranks) count.set(r, (count.get(r) ?? 0) + 1);
+  const [best] = [...count.entries()].sort((a, b) => b[1] - a[1]);
+  return best && best[0] && best[1] * 2 > ranks.length ? best[0] : "";
+}
+
 function voteMortgage(items: RegistryMortgage[]): RegistryMortgage {
   return {
-    rank: items[0].rank,
+    rank: voteRank(items.map((m) => m.rank)),
     receiptNumber: voteValue(items.map((m) => m.receiptNumber)),
     registrationDate: voteValue(items.map((m) => m.registrationDate)),
     maxClaimAmount: voteValue(items.map((m) => m.maxClaimAmount)),

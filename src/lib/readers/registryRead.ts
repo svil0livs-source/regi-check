@@ -9,7 +9,8 @@ import { decodePageImages, PdfImageError } from "./pdfImages";
 import { selectPageImages, type PageImageObject } from "./pdfPages";
 import { readRegistryImages, RegistryReadError, type RegistryRead } from "./registryOcr";
 import { DEFAULT_CONF_MIN, parseRegistryLines } from "./registryParse";
-import { recognizePage, type RecognizeOptions } from "./tesseractOcr";
+import { readTablePage } from "./registryTable";
+import type { RecognizeOptions } from "./tesseractOcr";
 
 /**
  * 읽기 설정 5개 (200dpi 스캔 기준, 가짜 서류 시험으로 고름).
@@ -17,12 +18,14 @@ import { recognizePage, type RecognizeOptions } from "./tesseractOcr";
  * - 배율 1.5~2.25배가 좋고 2.5배 이상은 나빴다. 완전 흑백(이진화)은 밝기 기준 210에서만 쓸 만했다.
  * - 설정마다 실수가 달라서 값마다 다수결로 정한다.
  */
+// 2026-11-06: 실제 등기부(300dpi)를 칸 단위로 읽어 보니 원본 크기 근처(200dpi 기준 배율 1.35~1.8 = 300dpi의 0.9~1.2배)가
+// 가장 정확했고, 더 키우면 호수·면적을 놓쳤다. 배율은 200dpi 기준으로 적는다(registryTable.ts가 300dpi에 맞춰 나눈다).
 const READS: RecognizeOptions[] = [
   { scale: 1.5, psm: "6" },
-  { scale: 1.75, psm: "6" },
-  { scale: 2, psm: "6" },
-  { scale: 2.25, psm: "6" },
-  { scale: 2, psm: "6", prep: "bin", threshold: 210 },
+  { scale: 1.65, psm: "6" },
+  { scale: 1.35, psm: "6" },
+  { scale: 1.8, psm: "6" },
+  { scale: 1.5, psm: "6", prep: "bin", threshold: 180 },
 ];
 
 /** 등기부 PDF 파일을 읽는다 (글자 읽기 실제 시험용) */
@@ -62,13 +65,14 @@ export async function readRegistryObjects(objects: PageImageObject[], signal?: A
     if (reads.length >= MIN_READS && elapsed + lastReadMs > budgetMs) break; // 다음 읽기가 예산을 넘길 것 같으면 멈춤
     const t0 = Date.now();
     const lines = [];
+    const state = { skip: "none" as "none" | "skip" };
     for (const page of pages) {
       if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
       if (Date.now() - started > budgetMs) {
         if (reads.length >= MIN_READS) break;
         throw tooSlow();
       }
-      lines.push(...(await recognizePage(page, opts, signal)));
+      lines.push(...(await readTablePage(page, opts, state, signal)));
     }
     if (Date.now() - started > budgetMs && reads.length >= MIN_READS) break; // 이번 읽기는 중간에 끊겼으므로 쓰지 않음
     reads.push(parseRegistryLines(lines, confMin));
@@ -104,6 +108,8 @@ export async function readRegistryPass(
   const confMin = Number(process.env.OCR_CONF_MIN) || DEFAULT_CONF_MIN;
   const started = Date.now();
   const lines = [];
+  // 2026-11-06: 실제 스캔본은 표 칸 단위로 읽는다 (registryTable.ts)
+  const state = { skip: "none" as "none" | "skip" };
   for (const page of pages) {
     if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
     if (Date.now() - started > PASS_BUDGET_MS) {
@@ -111,7 +117,7 @@ export async function readRegistryPass(
         `등기부등본 페이지(${pages.length}쪽)가 많아 한 번 읽기에 서버 한도(300초)를 넘었습니다. 필요한 페이지만 담은 PDF로 다시 올려 주세요.`,
       );
     }
-    lines.push(...(await recognizePage(page, opts, signal)));
+    lines.push(...(await readTablePage(page, opts, state, signal)));
   }
   return { read: parseRegistryLines(lines, confMin), total: READS.length };
 }

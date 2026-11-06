@@ -162,3 +162,45 @@ describe("parseRegistryLines", () => {
     expect(r.mortgages[0].transfers).toHaveLength(0);
   });
 });
+
+// ── 실제 스캔본(칸 단위로 읽은 줄 모양)에서 본 경우들 (2026-11-06) ──
+describe("parseRegistryLines: 실제 스캔본 모양", () => {
+  const scan = (unitLine: string, holder: ParseLine[]): ParseLine[] => [
+    L("[집합건물] 서울특별시 가상구 나라동 346 시험타운 제110동 제13충 제1301호"),
+    L("【 표 제 부 】  (1동의 건물의 표시)"),
+    L("서울특별시 가상구 나라동 346 시험타운 제110동  철근콘크리트벽식구조"),
+    L("【 표 제 부 】  (전유부분의 건물의 표시)"),
+    L(unitLine),
+    L("( 대지권의 표시 )"),
+    L("[ 을     고 】   ( 가나다 )"), // 을구 제목을 잘못 읽음
+    L("순위번호  등기목적  접 수  등기원인  권리자 및 기타사항"),
+    L("10  근저당권설정  2021년1월18일 제8310호  2021년1월18일 설정계약  채권최고액 금108,000,000원"),
+    L("채무자 김가명"),
+    ...holder,
+    L("13-1  13번근저당권부채권 질권설정  2026년6월1일 제3001698호  2026년6월1일 설정계약  채권액 금1원"),
+    L("채무자 다른사람"),
+  ];
+
+  it("층을 '충'으로 읽어도 호수를 읽고, 을구 제목을 잘못 읽어도 근저당권을 찾는다", () => {
+    const r = parseRegistryLines(scan("2001년4월30일  제13충 제1301호  철근콘크리트벽식구 조 114.62ㅁ", [L("근저당권자 가나생명보험주식회사 110111-0018443")]));
+    expect(r.properties[0].unitNumber).toEqual({ text: "제13층 제1301호", uncertain: false });
+    expect(r.properties[0].location.text).toBe("서울특별시 가상구 나라동");
+    expect(r.mortgages).toHaveLength(1);
+    expect(r.mortgages[0].rank).toBe("10");
+  });
+
+  it("질권 등 다른 등기의 채무자는 앞 근저당권에 섞지 않는다", () => {
+    const r = parseRegistryLines(scan("제13층 제1301호  철근콘크리트구조 114.62ㅁ", [L("근저당권자 가나생명보험주식회사 110111-0018443")]));
+    expect(r.mortgages[0].debtors.map((d) => d.text)).toEqual(["김가명"]);
+  });
+
+  it("등록번호가 다음 줄로 넘어가도 앞 6자리를 읽는다", () => {
+    const r = parseRegistryLines(scan("제13층 제1301호  철근콘크리트구조 114.62ㅁ", [L("근저당권자 가나생명보험주식회사"), L("110111-0018443")]));
+    expect(r.mortgages[0].mortgageeIdFront.text).toBe("110111");
+  });
+
+  it("면적에 소수 셋째 자리가 붙으면(㎡를 1로 읽었을 수 있음) 확신하지 않는다", () => {
+    const r = parseRegistryLines(scan("제13층 제1301호  철근콘크리트구조 114.621", [L("근저당권자 가나생명보험주식회사 110111-0018443")]));
+    expect(r.properties[0].area.uncertain).toBe(true);
+  });
+});

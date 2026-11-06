@@ -60,6 +60,9 @@ function selectMortgages(reg: RegistryRead, hwp: DocumentFields) {
     }
     const hits = all.filter((r) => r.receiptNumber.text && !r.receiptNumber.uncertain && normalizeReceiptNumber(r.receiptNumber.text) === target);
     if (hits.length === 1) return hits[0];
+    // 건물·토지 등기부가 한 PDF에 함께 있으면 같은 공동담보 근저당권이 여러 번 나온다: 접수일까지 같으면 같은 건으로 본다
+    const sameDay = (r: RegistryMortgage) => r.registrationDate.text?.replace(/\s+/g, "");
+    if (hits.length > 1 && hits.every((h) => !h.registrationDate.uncertain && sameDay(h) && sameDay(h) === sameDay(hits[0]))) return hits[0];
     if (hits.length > 1) {
       needAll("같은 접수번호의 근저당권이 여러 건이라 어느 것과 비교할지 확신할 수 없음");
       return undefined;
