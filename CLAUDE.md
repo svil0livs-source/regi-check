@@ -23,9 +23,10 @@ npm run dev     # 개발 서버 (http://localhost:3000)
 npm run build   # 프로덕션 빌드
 npm run lint    # ESLint
 npm run test    # 대조 규칙 자동 시험 (Vitest 4.x). 글자 읽기 실제 시험은 건너뜀
-# 글자 읽기(서버 안 Tesseract, 무료)까지 시험용 가짜 서류 20건으로 끝까지 시험 (몇 분 걸림)
+# 글자 읽기(서버 안 Tesseract, 무료)까지 시험용 가짜 서류 20건으로 배포본과 같은 방법(5번 읽기·다수결)으로 끝까지 시험 (20~30분)
 # RUN_OCR=1 npx vitest run src/lib/verify/ocr.live.test.ts
-# 시험용 가짜 서류 다시 만들기: node scripts/fixtures/cases.mjs → make-hwp.ps1 → make-registry-pdf.ps1 → make-hangul-formats.ps1(구버전·신버전 한글 형식) 순서로 실행
+# 시험용 가짜 서류 20건 다시 만들기 (실제 양식 기준, 2026-11-06): node scripts/fixtures/make-fixtures.mjs  (Playwright·curl 필요)
+#   → tests/fixtures/<건>/양도증서.hml(.hwpx) + 등기사항전부증명서.pdf(300dpi 회색조 스캔 모양), tests/fixtures/정답표.json·.md
 ```
 
 ## 중요: Next.js 버전 주의
