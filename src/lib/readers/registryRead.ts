@@ -88,35 +88,40 @@ export interface PassCarry {
   skip: "none" | "skip";
 }
 
-/** 읽기 한 조각의 결과: 마지막 조각이면 대조 항목 값, 아니면 다음 조각으로 넘길 상태 */
-export type PassResult = { done: true; read: RegistryRead; total: number } | { done: false; carry: PassCarry };
+/**
+ * 읽기 한 조각의 결과: 마지막 조각을 끝까지 읽었으면 대조 항목 값, 아니면 다음 조각으로 넘길 상태.
+ * nextPage: 시간 예산이 다 돼 중간에 멈췄으면 아직 읽지 않은 첫 페이지 번호 (브라우저가 그 페이지부터 다시 보낸다)
+ */
+export type PassResult =
+  | { done: true; read: RegistryRead; total: number }
+  | { done: false; carry: PassCarry; nextPage?: number };
 
 /**
- * 2026-11-06: 오래 걸려도 끝까지 처리하도록, 브라우저가 읽기 설정 하나씩 따로 요청한다(요청마다 서버 한도 300초).
+ * 2026-11-06: 오래 걸려도 끝까지 처리하도록, 브라우저가 읽기 설정 하나씩 따로 요청한다.
  * 2026-11-06: 파일 크기 한도를 없애 큰 등기부는 몇 쪽씩 나눠 보낸다. 앞 조각의 상태(carry)를 이어받아 읽고,
  * 마지막 조각(last)에서 모은 줄을 한꺼번에 해석해 대조 항목 값만 돌려준다(읽은 원문은 돌려주지 않음).
+ * 2026-11-06 사용자 결정(검증 시간 제한 없앰): 요청 하나는 서버 한도(300초)를 넘을 수 없으므로,
+ * 시간 예산이 다 되면 실패하지 않고 그때까지 읽은 상태와 다음 페이지 번호를 돌려준다. 페이지가 아무리 많아도 끝까지 읽는다.
  * total은 전체 읽기 횟수.
  */
 export async function readRegistryPass(
   objects: PageImageObject[],
   index: number,
   signal?: AbortSignal,
-  options: { carry?: PassCarry | null; last?: boolean } = {},
+  options: { carry?: PassCarry | null; last?: boolean; budgetMs?: number } = {},
 ): Promise<PassResult> {
-  const { carry = null, last = true } = options;
-  let pages: Buffer[];
-  try {
-    pages = await decodePageImages(objects);
-  } catch (err) {
-    if (err instanceof PdfImageError) throw new RegistryReadError(err.message);
-    throw err;
-  }
-  if (pages.length === 0) {
-    throw new RegistryReadError("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
-  }
+  const { carry = null, last = true, budgetMs = Number(process.env.OCR_PASS_BUDGET_MS) || PASS_BUDGET_MS } = options;
   // OpenAI는 한 요청 안에서 여러 번 읽어 다수결까지 한다 (나눠 읽기는 하지 않는다)
   if ((process.env.OCR_ENGINE ?? "tesseract") === "openai") {
     if (carry || !last) throw new RegistryReadError("등기부등본이 커서 나눠 읽어야 하는데, OpenAI 읽기 방식은 나눠 읽기를 하지 않습니다.");
+    let pages: Buffer[];
+    try {
+      pages = await decodePageImages(objects);
+    } catch (err) {
+      if (err instanceof PdfImageError) throw new RegistryReadError(err.message);
+      throw err;
+    }
+    if (pages.length === 0) throw new RegistryReadError("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
     return { done: true, read: await readRegistryImages(pages, signal), total: 1 };
   }
   const opts = READS[index];
@@ -126,12 +131,31 @@ export async function readRegistryPass(
   const lines: ParseLine[] = [...(carry?.lines ?? [])];
   // 2026-11-06: 실제 스캔본은 표 칸 단위로 읽는다 (registryTable.ts)
   const state = { skip: carry?.skip ?? ("none" as "none" | "skip") };
-  for (const page of pages) {
+  // 페이지마다 사진을 그때그때 풀어 읽는다 (중간에 멈출 때 어느 페이지까지 읽었는지 알 수 있도록)
+  const byPage = new Map<number, PageImageObject[]>();
+  for (const o of objects) byPage.set(o.page, [...(byPage.get(o.page) ?? []), o]);
+  const order = [...byPage.keys()].sort((a, b) => a - b);
+  let decoded = 0;
+  let firstError: PdfImageError | null = null;
+  for (const [k, pageNo] of order.entries()) {
     if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
-    if (Date.now() - started > PASS_BUDGET_MS) {
-      throw new RegistryReadError(`등기부등본 페이지(${pages.length}쪽)를 한 번에 읽다가 서버 한도(300초)를 넘었습니다. 잠시 뒤 다시 시도해 주세요.`);
+    // 시간 예산이 다 됐으면 여기까지 읽은 것을 넘기고 멈춘다 (한 페이지는 반드시 읽는다)
+    if (k > 0 && Date.now() - started > budgetMs) return { done: false, carry: { lines, skip: state.skip }, nextPage: pageNo };
+    let images: Buffer[];
+    try {
+      images = await decodePageImages(byPage.get(pageNo)!);
+    } catch (err) {
+      if (!(err instanceof PdfImageError)) throw err;
+      firstError ??= err;
+      continue;
     }
-    lines.push(...(await readTablePage(page, opts, state, signal)));
+    for (const page of images) {
+      decoded++;
+      lines.push(...(await readTablePage(page, opts, state, signal)));
+    }
+  }
+  if (decoded === 0 && !carry) {
+    throw new RegistryReadError(firstError?.message ?? "스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
   }
   if (!last) return { done: false, carry: { lines, skip: state.skip } };
   return { done: true, read: parseRegistryLines(lines, confMin), total: READS.length };
@@ -140,8 +164,11 @@ export async function readRegistryPass(
 /** 따로 읽은 결과들을 값마다 다수결로 합친다 */
 export const combineReads = (reads: RegistryRead[]): RegistryRead => voteRegistryReads(reads);
 
-/** 한 번 읽기 시간 예산 (서버 한도 300초 중 응답 몫을 남김) */
-const PASS_BUDGET_MS = 280_000;
+/**
+ * 요청 하나의 읽기 시간 예산: 이 시간이 지나면 다음 페이지를 읽지 않고 멈춰 다음 요청으로 넘긴다.
+ * 서버 한도 300초 안에 페이지 하나(느리면 수십 초)와 응답까지 끝나도록 넉넉히 남긴다.
+ */
+const PASS_BUDGET_MS = 180_000;
 
 /** 읽기 시간 예산 (서버 한도 300초 중 한글 파일 읽기·대조·응답 몫을 남김) */
 const TIME_BUDGET_MS = 230_000;

@@ -57,26 +57,27 @@ const STATUS_STYLE: Record<FieldStatus, string> = {
 const STATUS_ORDER: Record<FieldStatus, number> = { mismatch: 0, needs_review: 1, unreadable: 2, match: 3 };
 
 /** JSON 응답이 없는 서버 오류의 화면 문구 (다시 시도해도 같은 이유로 실패하는 경우는 그렇게 알린다) */
-/** 요청 하나(읽기 한 번)를 기다리는 최대 시간 (서버 한도 300초 + 여유) */
-const REQUEST_TIMEOUT_MS = 330_000;
 
 function httpErrorMessage(status: number): string {
   if (status === 413) return "보낼 내용이 너무 커서 서버가 받지 못했습니다. 등기부등본에서 필요한 페이지만 담아 다시 올려 주세요.";
-  if (status === 504 || status === 408) return "처리 시간이 한도(300초)를 넘었습니다. 페이지가 많은 등기부는 처리하지 못할 수 있습니다.";
+  if (status === 504 || status === 408) return "서버가 제때 응답하지 못했습니다. 잠시 뒤 같은 폴더를 다시 고르면 이어서 처리합니다.";
   if (status >= 500) return `서버 오류로 처리하지 못했습니다 (HTTP ${status}). 잠시 뒤 같은 폴더를 다시 고르면 이어서 처리합니다.`;
   return `처리하지 못했습니다 (HTTP ${status}).`;
 }
 
 /** 요청 하나를 보내고 JSON을 받는다. 서버 앞단 오류(413·504 등)는 화면 문구로 바꿔 던진다 */
 async function post<T>(folder: string, body: FormData, signal: AbortSignal): Promise<T> {
-  // 연결이 멈춰도 끝없이 기다리지 않게 요청마다 시간 한도를 둔다 (CHECK 11번)
-  const res = await fetch("/api/verify", { method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) });
+  // 2026-11-06 사용자 결정: 검증 시간 제한은 두지 않는다 (서버가 시간이 다 되면 스스로 멈추고 다음 요청으로 넘긴다)
+  const res = await fetch("/api/verify", { method: "POST", body, signal });
   const json = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
   if (!res.ok || !json) throw new PrepareFailed({ folder, summary: "processing_failed", results: [], error: json?.error ?? httpErrorMessage(res.status) });
   return json;
 }
 
-type PassResponse = { ok: true; read: unknown; total: number } | { ok: true; carry: string } | { ok: false; outcome: CaseOutcome };
+type PassResponse =
+  | { ok: true; read: unknown; total: number }
+  | { ok: true; carry: string; nextPage?: number }
+  | { ok: false; outcome: CaseOutcome };
 
 /**
  * 한 건 처리 (2026-11-06): 서버 한도(요청마다 300초)에 막히지 않도록 등기부 읽기를 한 번씩 따로 요청하고,
@@ -105,9 +106,12 @@ async function runCase(
       const r = await post<PassResponse>(folder, readBody(folder, images.slice(start, end), { pass, chunk, last, carry }), signal);
       if (!r.ok) return r.outcome;
       if ("carry" in r) {
-        if (last) return { folder, summary: "processing_failed", results: [], error: "서버 응답이 올바르지 않습니다." };
+        // 서버가 시간이 다 돼 중간에 멈췄으면 아직 못 읽은 페이지부터 다시 보낸다
+        const resume = r.nextPage === undefined ? -1 : images.findIndex((o, i) => i >= start && i < end && o.page === r.nextPage);
+        if (resume > start) start = resume;
+        else if (r.nextPage === undefined && !last) start = end;
+        else return { folder, summary: "processing_failed", results: [], error: "서버 응답이 올바르지 않습니다." };
         carry = r.carry;
-        start = end;
         continue;
       }
       reads.push(r.read);
@@ -233,14 +237,11 @@ export default function Verifier() {
             setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "waiting" } : r)));
             break;
           } else {
-            const timedOut = (err as Error)?.name === "TimeoutError";
             outcome = {
               folder,
               summary: "processing_failed",
               results: [],
-              error: timedOut
-                ? `읽기 한 번이 ${REQUEST_TIMEOUT_MS / 1000}초 안에 끝나지 않아 멈췄습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.`
-                : "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
+              error: "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
             };
           }
         }
