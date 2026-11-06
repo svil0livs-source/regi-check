@@ -7,8 +7,8 @@ import type { PageImageObject } from "@/lib/readers/pdfPages";
 import type { OcrValue, RegistryMortgage, RegistryRead, RegistryTransfer } from "@/lib/readers/registryOcr";
 import { PARTY_ROLES, PROPERTY_FIELD_KEYS, type DocumentFields, type ExtractedValue, type MortgageEntry, type PropertyEntry } from "@/types/verification";
 
-/** 요청 하나의 최대 크기: 배포본(Vercel) 요청 한도 약 4.5MB에서 머리말 몫을 뺀 값 */
-export const MAX_REQUEST_BYTES = Math.floor(4.3 * 1024 * 1024);
+/** 요청 하나의 최대 크기: 배포본(Vercel) 요청 한도 4.5MB(10진, 약 4394KB)에 여유를 둔 값 (2026-11-06: 4.3MiB는 한도에 너무 붙어서 줄임) */
+export const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 /** 페이지 사진 후보 최대 개수 */
 export const MAX_IMAGES = 200;
 /** 페이지 번호의 최대값 (파일 크기 한도를 없앴으므로 넉넉히, 2026-11-06) */
