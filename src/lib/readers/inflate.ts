@@ -1,5 +1,5 @@
 // 압축 풀기 (서버와 브라우저 공용).
-// 2026-11-06: 한글 파일을 브라우저에서 읽도록 바뀌어(파일당 6000KB까지 받기 위해) node:zlib 대신 fflate를 쓴다.
+// 2026-11-06: 한글 파일을 브라우저에서 읽도록 바뀌어(요청 한도 약 4.5MB 때문에) node:zlib 대신 fflate를 쓴다.
 import { Buffer } from "buffer";
 import { inflateSync, unzlibSync } from "fflate";
 

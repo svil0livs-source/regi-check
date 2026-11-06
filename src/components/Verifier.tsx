@@ -11,7 +11,9 @@ import Navbar, { type NavLink } from "@/components/Navbar";
 import UploadModal from "@/components/UploadModal";
 import { checkFolders, type CaseCheck } from "@/lib/upload/checkFolders";
 import { fromDataTransfer, fromFileList, type PickedFile } from "@/lib/upload/collectFiles";
+import type { PageImageObject } from "@/lib/readers/pdfPages";
 import { prepareCase } from "@/lib/upload/prepareCase";
+import { chunkRoom, readBody, takeChunk } from "@/lib/upload/readRequests";
 import { clearAll, loadAll, save, type StoredOutcome } from "@/lib/storage/resultStore";
 import type { CaseOutcome } from "@/lib/verify/processCase";
 import {
@@ -74,30 +76,49 @@ async function post<T>(folder: string, body: FormData, signal: AbortSignal): Pro
   return json;
 }
 
-type PassResponse = { ok: true; read: unknown; total: number } | { ok: false; outcome: CaseOutcome };
+type PassResponse = { ok: true; read: unknown; total: number } | { ok: true; carry: string } | { ok: false; outcome: CaseOutcome };
 
 /**
  * 한 건 처리 (2026-11-06): 서버 한도(요청마다 300초)에 막히지 않도록 등기부 읽기를 한 번씩 따로 요청하고,
  * 모은 결과(대조 항목 값만)를 마지막에 한글 서류 값과 함께 보내 대조한다. 오래 걸려도 끝까지 처리한다.
+ * 큰 등기부는 읽기 한 번을 요청 한도에 맞게 몇 쪽씩 나눠 보내고, 서버가 준 꾸러미(암호화된 앞부분)를 다음 조각에 붙인다.
  */
-async function runCase(folder: string, prepared: FormData, signal: AbortSignal, onProgress: (n: number, total: number) => void): Promise<CaseOutcome> {
+async function runCase(
+  folder: string,
+  prepared: { fields: string; images: PageImageObject[] },
+  signal: AbortSignal,
+  onProgress: (n: number, total: number) => void,
+): Promise<CaseOutcome> {
+  const { images } = prepared;
   const reads: unknown[] = [];
   let total = 1;
   for (let pass = 0; pass < total; pass++) {
     onProgress(pass + 1, pass === 0 ? READ_PASSES_HINT : total);
-    const body = new FormData();
-    for (const [k, v] of prepared) if (k !== "fields") body.append(k, v);
-    body.set("step", "read");
-    body.set("pass", String(pass));
-    const r = await post<PassResponse>(folder, body, signal);
-    if (!r.ok) return r.outcome;
-    reads.push(r.read);
-    total = r.total;
+    let start = 0;
+    let carry: string | undefined;
+    for (let chunk = 0; ; chunk++) {
+      const end = takeChunk(images, start, chunkRoom(folder, carry));
+      if (end === start) {
+        return { folder, summary: "processing_failed", results: [], error: "등기부등본이 너무 커서 나눠 보내지 못했습니다. 필요한 페이지만 담아 다시 올려 주세요." };
+      }
+      const last = end === images.length;
+      const r = await post<PassResponse>(folder, readBody(folder, images.slice(start, end), { pass, chunk, last, carry }), signal);
+      if (!r.ok) return r.outcome;
+      if ("carry" in r) {
+        if (last) return { folder, summary: "processing_failed", results: [], error: "서버 응답이 올바르지 않습니다." };
+        carry = r.carry;
+        start = end;
+        continue;
+      }
+      reads.push(r.read);
+      total = r.total;
+      break;
+    }
   }
   const body = new FormData();
   body.set("step", "compare");
   body.set("folder", folder);
-  body.set("fields", String(prepared.get("fields")));
+  body.set("fields", prepared.fields);
   body.set("reads", JSON.stringify(reads));
   return post<CaseOutcome>(folder, body, signal);
 }
@@ -199,10 +220,10 @@ export default function Verifier() {
 
         let outcome: CaseOutcome;
         try {
-          // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (파일당 6000KB까지 받기 위해, 2026-11-06)
-          const prepared = await prepareCase(folder, files.get(hwpPath!)!, files.get(pdfPath!)!);
+          // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (요청 한도 때문에, 2026-11-06)
+          const prepared = await prepareCase(files.get(hwpPath!)!, files.get(pdfPath!)!);
           if (!prepared.ok) throw new PrepareFailed({ folder, summary: prepared.summary, results: [], error: prepared.error });
-          outcome = await runCase(folder, prepared.body, ac.signal, (n, total) =>
+          outcome = await runCase(folder, prepared, ac.signal, (n, total) =>
             setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, progress: `${n}/${total}` } : r))),
           );
         } catch (err) {

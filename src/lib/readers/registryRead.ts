@@ -8,7 +8,7 @@ import { voteRegistryReads } from "./ocrVote";
 import { decodePageImages, PdfImageError } from "./pdfImages";
 import { selectPageImages, type PageImageObject } from "./pdfPages";
 import { readRegistryImages, RegistryReadError, type RegistryRead } from "./registryOcr";
-import { DEFAULT_CONF_MIN, parseRegistryLines } from "./registryParse";
+import { DEFAULT_CONF_MIN, parseRegistryLines, type ParseLine } from "./registryParse";
 import { readTablePage } from "./registryTable";
 import type { RecognizeOptions } from "./tesseractOcr";
 
@@ -82,15 +82,28 @@ export async function readRegistryObjects(objects: PageImageObject[], signal?: A
   return voteRegistryReads(reads);
 }
 
+/** 조각 사이에 이어지는 읽기 상태 (읽은 줄과 갑구 건너뛰기 상태) */
+export interface PassCarry {
+  lines: ParseLine[];
+  skip: "none" | "skip";
+}
+
+/** 읽기 한 조각의 결과: 마지막 조각이면 대조 항목 값, 아니면 다음 조각으로 넘길 상태 */
+export type PassResult = { done: true; read: RegistryRead; total: number } | { done: false; carry: PassCarry };
+
 /**
  * 2026-11-06: 오래 걸려도 끝까지 처리하도록, 브라우저가 읽기 설정 하나씩 따로 요청한다(요청마다 서버 한도 300초).
- * index번째 설정으로 한 번 읽어 대조 항목 값만 돌려준다(읽은 원문은 돌려주지 않음). total은 전체 읽기 횟수.
+ * 2026-11-06: 파일 크기 한도를 없애 큰 등기부는 몇 쪽씩 나눠 보낸다. 앞 조각의 상태(carry)를 이어받아 읽고,
+ * 마지막 조각(last)에서 모은 줄을 한꺼번에 해석해 대조 항목 값만 돌려준다(읽은 원문은 돌려주지 않음).
+ * total은 전체 읽기 횟수.
  */
 export async function readRegistryPass(
   objects: PageImageObject[],
   index: number,
   signal?: AbortSignal,
-): Promise<{ read: RegistryRead; total: number }> {
+  options: { carry?: PassCarry | null; last?: boolean } = {},
+): Promise<PassResult> {
+  const { carry = null, last = true } = options;
   let pages: Buffer[];
   try {
     pages = await decodePageImages(objects);
@@ -101,25 +114,27 @@ export async function readRegistryPass(
   if (pages.length === 0) {
     throw new RegistryReadError("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
   }
-  // OpenAI는 한 요청 안에서 여러 번 읽어 다수결까지 한다
-  if ((process.env.OCR_ENGINE ?? "tesseract") === "openai") return { read: await readRegistryImages(pages, signal), total: 1 };
+  // OpenAI는 한 요청 안에서 여러 번 읽어 다수결까지 한다 (나눠 읽기는 하지 않는다)
+  if ((process.env.OCR_ENGINE ?? "tesseract") === "openai") {
+    if (carry || !last) throw new RegistryReadError("등기부등본이 커서 나눠 읽어야 하는데, OpenAI 읽기 방식은 나눠 읽기를 하지 않습니다.");
+    return { done: true, read: await readRegistryImages(pages, signal), total: 1 };
+  }
   const opts = READS[index];
   if (!opts) throw new RegistryReadError("읽기 순서가 올바르지 않습니다.");
   const confMin = Number(process.env.OCR_CONF_MIN) || DEFAULT_CONF_MIN;
   const started = Date.now();
-  const lines = [];
+  const lines: ParseLine[] = [...(carry?.lines ?? [])];
   // 2026-11-06: 실제 스캔본은 표 칸 단위로 읽는다 (registryTable.ts)
-  const state = { skip: "none" as "none" | "skip" };
+  const state = { skip: carry?.skip ?? ("none" as "none" | "skip") };
   for (const page of pages) {
     if (signal?.aborted) throw new RegistryReadError("처리가 취소됐습니다.");
     if (Date.now() - started > PASS_BUDGET_MS) {
-      throw new RegistryReadError(
-        `등기부등본 페이지(${pages.length}쪽)가 많아 한 번 읽기에 서버 한도(300초)를 넘었습니다. 필요한 페이지만 담은 PDF로 다시 올려 주세요.`,
-      );
+      throw new RegistryReadError(`등기부등본 페이지(${pages.length}쪽)를 한 번에 읽다가 서버 한도(300초)를 넘었습니다. 잠시 뒤 다시 시도해 주세요.`);
     }
     lines.push(...(await readTablePage(page, opts, state, signal)));
   }
-  return { read: parseRegistryLines(lines, confMin), total: READS.length };
+  if (!last) return { done: false, carry: { lines, skip: state.skip } };
+  return { done: true, read: parseRegistryLines(lines, confMin), total: READS.length };
 }
 
 /** 따로 읽은 결과들을 값마다 다수결로 합친다 */

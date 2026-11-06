@@ -1,6 +1,6 @@
 // 업로드 검사 규칙 시험 (DESIGN.md §3.1)
 import { describe, expect, it } from "vitest";
-import { checkFolders, MAX_FILE_BYTES, pairByName } from "./checkFolders";
+import { checkFolders, pairByName } from "./checkFolders";
 
 const f = (path: string, size = 1000) => ({ path, size });
 
@@ -46,12 +46,9 @@ describe("checkFolders", () => {
     expect(r.cases[0].hwpPath).toBe("A/a.hwpx");
   });
 
-  it("한 건 합계 제한은 없고, 파일 하나가 6000KB를 넘으면 문제 (2026-11-06)", () => {
-    const ok = checkFolders([f("A/a.hwp", MAX_FILE_BYTES), f("A/a.pdf", MAX_FILE_BYTES)]);
-    expect(ok.cases[0].ok).toBe(true);
-    const r = checkFolders([f("B/b.hwp"), f("B/b.pdf", MAX_FILE_BYTES + 1)]);
-    expect(r.cases[0].reasons).toContain("6000KB 초과: b.pdf");
-    expect(MAX_FILE_BYTES).toBe(6000 * 1024);
+  it("파일 크기 한도는 없다 (2026-11-06 사용자 결정: 실제 등기부가 13.9MB)", () => {
+    const r = checkFolders([f("A/a.hwp", 50 * 1024 * 1024), f("A/a.pdf", 200 * 1024 * 1024)]);
+    expect(r.cases[0].ok).toBe(true);
   });
 
   it("같은 이름 폴더가 두 군데 있으면 둘 다 문제", () => {

@@ -57,7 +57,7 @@ export default function Hero({ dragging, storedCount, blocking, onPick, onInfo, 
 
           <p className="max-w-md break-keep text-xs leading-relaxed text-white/75 [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]">
             한글 파일과 등기부등본 PDF가 든 폴더를 끌어다 놓아도 됩니다. 한 폴더에 여러 건이면 파일 이름의 같은 값(예: 채무자 이름)으로 짝짓습니다.
-            <br className="hidden sm:block" /> 한 번에 30건(한글 파일 30개)까지, 파일 하나 6000KB 이하.
+            <br className="hidden sm:block" /> 한 번에 30건(한글 파일 30개)까지. 파일 크기 제한은 없습니다.
           </p>
 
           <button

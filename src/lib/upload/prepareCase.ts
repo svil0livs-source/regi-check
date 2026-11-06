@@ -1,21 +1,20 @@
-// 건 하나를 서버로 보낼 준비를 브라우저에서 한다 (2026-11-06, 파일당 6000KB까지 받기 위해).
+// 건 하나를 서버로 보낼 준비를 브라우저에서 한다 (2026-11-06).
 // 배포본(Vercel)은 요청 하나가 약 4.5MB를 넘으면 받지 못하므로 원본 파일을 통째로 보내지 않는다.
 //   1) 한글 파일: 여기서 읽어 대조 항목 값만 보낸다 (주민·법인등록번호는 앞 6자리만, 원문은 보내지 않음)
-//   2) 등기부 PDF: 페이지 사진만 꺼내 그대로 보낸다. 한도를 넘으면 회색조 JPEG로 다시 저장해 줄인다 (fitImages.ts)
+//   2) 등기부 PDF: 페이지 사진만 꺼내 그대로 보낸다. 파일 크기 한도는 없고(2026-11-06 사용자 결정),
+//      한 요청에 다 안 들어가면 몇 쪽씩 나눠 보낸다(readRequests.ts). 페이지 하나가 한 요청보다 클 때만
+//      그 페이지를 회색조 JPEG로 다시 저장해 줄인다 (fitImages.ts)
 // 읽은 글자는 이 함수 안에서만 쓰고 버린다. 로그에 남기지 않는다.
 import { isHangulFile, readHangulParagraphs } from "@/lib/readers/hangulFile";
 import { extractHwpFields } from "@/lib/readers/hwpFields";
 import { HwpReadError } from "@/lib/readers/hwpText";
 import { selectPageImages, type PageImageObject } from "@/lib/readers/pdfPages";
-import { MAX_REQUEST_BYTES, type ImageMeta } from "@/lib/verify/caseRequest";
 import { fitImages, grayJpegDict, type Reencode } from "./fitImages";
+import { groupByPage, imageCost, PAGE_ROOM } from "./readRequests";
 
 export type PreparedCase =
-  | { ok: true; body: FormData; reencoded: boolean }
+  | { ok: true; fields: string; images: PageImageObject[]; reencoded: boolean }
   | { ok: false; summary: "file_problem" | "processing_failed"; error: string };
-
-/** 요청 안 칸마다 붙는 머리말 몫 (넉넉히) */
-const PART_OVERHEAD = 200;
 
 const isPdf = (b: Uint8Array) => String.fromCharCode(...b.subarray(0, 5)) === "%PDF-";
 
@@ -48,7 +47,7 @@ export const canvasReencode: Reencode = async (o, quality) => {
 
 const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
 
-export async function prepareCase(folder: string, hwpFile: Blob, pdfFile: Blob, reencode: Reencode = canvasReencode): Promise<PreparedCase> {
+export async function prepareCase(hwpFile: Blob, pdfFile: Blob, reencode: Reencode = canvasReencode): Promise<PreparedCase> {
   const fail = (error: string): PreparedCase => ({ ok: false, summary: "processing_failed", error });
 
   // 1) 한글 파일 → 대조 항목 값
@@ -72,21 +71,21 @@ export async function prepareCase(folder: string, hwpFile: Blob, pdfFile: Blob, 
   }
   if (images.length === 0) return fail("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
 
-  const metaSize = (list: PageImageObject[]) => JSON.stringify(list.map((o) => ({ page: o.page, dict: o.dict }))).length;
-  const budget = MAX_REQUEST_BYTES - new Blob([fieldsJson, folder]).size - metaSize(images) * 2 - PART_OVERHEAD * (images.length + 4);
-  const fit = await fitImages(images, budget, reencode);
-  if (!fit.ok) {
-    return {
-      ok: false,
-      summary: "file_problem",
-      error: `등기부등본 사진이 커서 줄여도 ${mb(fit.bytes)}MB — 서버로 보낼 수 있는 크기(약 ${mb(budget)}MB)를 넘음. 필요한 페이지만 담거나 회색조로 다시 스캔해 주세요.`,
-    };
+  // 페이지마다 한 요청에 들어가는지 본다. 넘는 페이지만 줄인다 (사진 크기(픽셀)는 그대로)
+  const out: PageImageObject[] = [];
+  let reencoded = false;
+  for (const group of groupByPage(images)) {
+    const extra = group.reduce((n, o) => n + imageCost(o) - o.data.byteLength, 0);
+    const fit = await fitImages(group, PAGE_ROOM - extra, reencode);
+    if (!fit.ok) {
+      return {
+        ok: false,
+        summary: "file_problem",
+        error: `등기부등본 ${group[0].page + 1}쪽 사진이 커서 줄여도 ${mb(fit.bytes)}MB — 한 번에 보낼 수 있는 크기(약 ${mb(PAGE_ROOM - extra)}MB)를 넘음. 회색조로 다시 스캔해 주세요.`,
+      };
+    }
+    out.push(...fit.images);
+    reencoded ||= fit.reencoded;
   }
-
-  const body = new FormData();
-  body.set("folder", folder);
-  body.set("fields", fieldsJson);
-  body.set("images", JSON.stringify(fit.images.map((o): ImageMeta => ({ page: o.page, dict: o.dict }))));
-  fit.images.forEach((o, i) => body.set(`img${i}`, new Blob([o.data as BlobPart]), `p${i}`));
-  return { ok: true, body, reencoded: fit.reencoded };
+  return { ok: true, fields: fieldsJson, images: out, reencoded };
 }

@@ -3,15 +3,12 @@
 // 화면과 분리된 순수 함수라서 서류 없이 시험할 수 있다.
 // 2026-11-06 사용자 결정:
 //   - 한 폴더에 여러 건(한글 파일 여러 개 + PDF 여러 개)이 있어도 된다. 파일 이름에 함께 들어 있는 값(예: 채무자 이름)으로 짝을 짓는다.
-//   - 파일 하나 6000KB까지 받는다 (한 건 합계 4.3MB 제한은 없앰. 브라우저가 줄여 보낸다).
+//   - 파일 크기 한도는 없다 (2026-11-06 사용자 결정. 큰 등기부는 브라우저가 몇 쪽씩 나눠 보낸다).
 //   - 한 번에 최대 30건 = 한글 파일 30개.
 //   - 한글·PDF가 아닌 파일은 세지 않고 무시한다.
 
 /** 한 번에 올릴 수 있는 최대 건 수 (한글 파일 수) */
 export const MAX_CASES = 30;
-/** 파일 하나의 최대 크기 (6000KB) */
-export const MAX_FILE_KB = 6000;
-export const MAX_FILE_BYTES = MAX_FILE_KB * 1024;
 
 /** 한글 파일로 받는 확장자 (.hwp = 한글 97~현재, .hwpx = 신버전, .hml = 한글 XML 문서) */
 const HWP_EXTS = ["hwp", "hwpx", "hml"];
@@ -158,7 +155,6 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
   }
 
   const folderName = (dir: string) => (dir === "" ? "(최상위)" : dir.slice(dir.lastIndexOf("/") + 1));
-  const tooBig = (fs: FileInfo[]) => fs.filter((f) => f.size > MAX_FILE_BYTES).map((f) => `${MAX_FILE_KB}KB 초과: ${f.name}`);
   const cases: CaseCheck[] = [];
 
   for (const dir of caseDirs) {
@@ -173,7 +169,6 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
       const reasons: string[] = [];
       if (hwps.length === 0) reasons.push("한글 파일 없음");
       if (pdfs.length === 0) reasons.push("등기부등본 PDF 없음");
-      reasons.push(...tooBig([...hwps, ...pdfs]));
       cases.push({ id: hwps[0]?.path ?? pdfs[0]?.path ?? `${dir}/`, folder, dir, ok: false, reasons, hwpPath: hwps[0]?.path, pdfPath: pdfs[0]?.path });
       continue;
     }
@@ -186,7 +181,6 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
       const reasons: string[] = [];
       if (pdfs.length === 0) reasons.push("등기부등본 PDF 없음");
       else if (!pdfPath) reasons.push(unpaired.get(h.path)!);
-      reasons.push(...tooBig(pdfPath ? [h, byPath.get(pdfPath)!] : [h]));
       cases.push({ id: h.path, folder: `${folder} / ${stem(h.name)}`, dir, ok: false, reasons, hwpPath: h.path, pdfPath });
     }
     for (const p of orphanPdfs) {
