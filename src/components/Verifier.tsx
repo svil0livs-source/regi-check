@@ -30,9 +30,27 @@ type Row = {
   state: "waiting" | "running" | "done";
   outcome?: CaseOutcome;
   resumed?: boolean;
-  /** 읽는 중일 때 진행 (예: "2/5") */
-  progress?: string;
+  /** 처리 중일 때 진행 상황 */
+  progress?: Progress;
 };
+
+/**
+ * 한 건의 진행 상황 (2026-11-06 사용자 요청: 큰 등기부는 몇 분 걸려 멈춘 것인지 헷갈리지 않도록).
+ * 쪽 수는 서버에 보낸 조각 단위로만 알 수 있어, 지금 보낸 조각의 쪽 범위를 보여 준다(한 요청에 다 들어가면 「전체 N쪽」).
+ */
+type Progress = {
+  stage: "prepare" | "read" | "compare";
+  /** 몇 번째 읽기 (1부터) / 모두 몇 번 */
+  pass: number;
+  passes: number;
+  /** 이번 읽기에서 끝난 쪽 수, 지금 읽는 조각의 마지막 쪽, 전체 쪽 수 */
+  pagesDone: number;
+  pagesTo: number;
+  pages: number;
+  /** 이 건을 시작한 때 (경과 시간 표시용) */
+  startedAt: number;
+};
+type ProgressStep = Omit<Progress, "startedAt">;
 
 const SUMMARY_STYLE: Record<CaseSummary, string> = {
   all_match: "bg-emerald-400/10 text-emerald-200 ring-emerald-300/30",
@@ -88,17 +106,21 @@ async function runCase(
   folder: string,
   prepared: { fields: string; images: PageImageObject[] },
   signal: AbortSignal,
-  onProgress: (n: number, total: number) => void,
+  onProgress: (p: ProgressStep) => void,
 ): Promise<CaseOutcome> {
   const { images } = prepared;
   const reads: unknown[] = [];
+  const pages = new Set(images.map((o) => o.page)).size;
+  /** images[0..start) 안의 쪽 수 (한 쪽의 사진들은 늘 같은 조각에 들어간다) */
+  const pagesBefore = (start: number) => new Set(images.slice(0, start).map((o) => o.page)).size;
   let total = 1;
   for (let pass = 0; pass < total; pass++) {
-    onProgress(pass + 1, pass === 0 ? READ_PASSES_HINT : total);
+    const passes = pass === 0 ? READ_PASSES_HINT : total;
     let start = 0;
     let carry: string | undefined;
     for (let chunk = 0; ; chunk++) {
       const end = takeChunk(images, start, chunkRoom(folder, carry));
+      onProgress({ stage: "read", pass: pass + 1, passes, pagesDone: pagesBefore(start), pagesTo: pagesBefore(end), pages });
       if (end === start) {
         return { folder, summary: "processing_failed", results: [], error: "등기부등본이 너무 커서 나눠 보내지 못했습니다. 필요한 페이지만 담아 다시 올려 주세요." };
       }
@@ -119,6 +141,7 @@ async function runCase(
       break;
     }
   }
+  onProgress({ stage: "compare", pass: total, passes: total, pagesDone: pages, pagesTo: pages, pages });
   const body = new FormData();
   body.set("step", "compare");
   body.set("folder", folder);
@@ -220,16 +243,18 @@ export default function Verifier() {
         if (ac.signal.aborted) break;
         if (row.state !== "waiting") continue;
         const { folder, hwpPath, pdfPath } = row.check;
+        const startedAt = Date.now();
+        const setProgress = (p: ProgressStep) =>
+          setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, progress: { ...p, startedAt } } : r)));
         setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "running" } : r)));
+        setProgress({ stage: "prepare", pass: 0, passes: READ_PASSES_HINT, pagesDone: 0, pagesTo: 0, pages: 0 });
 
         let outcome: CaseOutcome;
         try {
           // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (요청 한도 때문에, 2026-11-06)
           const prepared = await prepareCase(files.get(hwpPath!)!, files.get(pdfPath!)!);
           if (!prepared.ok) throw new PrepareFailed({ folder, summary: prepared.summary, results: [], error: prepared.error });
-          outcome = await runCase(folder, prepared, ac.signal, (n, total) =>
-            setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, progress: `${n}/${total}` } : r))),
-          );
+          outcome = await runCase(folder, prepared, ac.signal, setProgress);
         } catch (err) {
           if (err instanceof PrepareFailed) {
             outcome = err.outcome;
@@ -473,7 +498,7 @@ export default function Verifier() {
                           <td className="px-4 py-3 font-mono text-white">{r.check.folder}</td>
                           <td className="px-4 py-3">
                             {r.state === "waiting" && <span className="text-white/50">대기</span>}
-                            {r.state === "running" && <span className="animate-pulse text-violet-200">읽는 중…{r.progress ? ` ${r.progress}` : ""}</span>}
+                            {r.state === "running" && <RunningStatus progress={r.progress} />}
                             {r.state === "done" && s && <Badge summary={s} />}
                           </td>
                           <td className="px-4 py-3 text-white/60">
@@ -560,4 +585,41 @@ function Detail({ outcome, onBack }: { outcome: CaseOutcome; onBack: () => void 
       </div>
     </section>
   );
+}
+
+/** 처리 중인 건의 진행 표시: 단계, 몇 번째 읽기·몇 쪽째, 경과 시간, 진행 막대 */
+function RunningStatus({ progress: p }: { progress?: Progress }) {
+  const label = !p || p.stage === "prepare" ? "파일 준비 중…" : p.stage === "compare" ? "대조 중…" : "읽는 중…";
+  // 한 요청에 다 들어가면 「전체 N쪽」, 나눠 보내면 지금 보낸 조각의 쪽 범위
+  const pageText = (q: Progress) =>
+    q.pagesDone === 0 && q.pagesTo >= q.pages ? `전체 ${q.pages}쪽` : `${q.pagesDone + 1}~${q.pagesTo}쪽 / 전체 ${q.pages}쪽`;
+  const detail =
+    p?.stage === "read" ? `${p.pass}/${p.passes}번째 읽기 · ${pageText(p)}` : p?.stage === "compare" ? `${p.passes}번 읽기 끝` : null;
+  // 전체 진행: 끝난 읽기 + 이번 읽기에서 끝난 쪽 비율
+  const ratio = !p || p.stage === "prepare" ? 0 : p.stage === "compare" ? 1 : (p.pass - 1 + (p.pages ? p.pagesDone / p.pages : 0)) / p.passes;
+  return (
+    <div className="min-w-44" role="status">
+      <span className="animate-pulse text-violet-200">{label}</span>
+      <div className="mt-1 text-xs text-white/55">
+        {detail && <span>{detail} · </span>}
+        {p && <Elapsed since={p.startedAt} />}
+      </div>
+      <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10" aria-hidden="true">
+        <div className="h-full rounded-full bg-violet-300/70 transition-[width] duration-500" style={{ width: `${Math.round(ratio * 100)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** 시작한 뒤 지난 시간 (1초마다 바뀜) */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(since);
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+  const sec = Math.max(0, Math.floor((now - since) / 1000));
+  const m = Math.floor(sec / 60);
+  return <span>{m ? `${m}분 ${sec % 60}초` : `${sec}초`} 지남</span>;
 }
