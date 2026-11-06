@@ -118,6 +118,8 @@ export async function recognizePage(image: Buffer, opts: RecognizeOptions | numb
 /** 칸 하나를 읽은 줄 (상자는 넘겨준 사진 기준 좌표) */
 export interface OcrBoxLine extends OcrLine {
   bbox: { x0: number; y0: number; x1: number; y1: number };
+  /** 단어마다 상자 (words와 같은 순서) */
+  wordBoxes: { x0: number; y0: number; x1: number; y1: number }[];
 }
 
 /**
@@ -144,6 +146,7 @@ export async function recognizeImage(png: Buffer, psm: Psm | "7", signal?: Abort
           text: line.text.replace(/\n/g, ""),
           words: line.words.map((w) => ({ text: w.text, confidence: w.confidence })),
           bbox: line.bbox,
+          wordBoxes: line.words.map((w) => w.bbox),
         });
       }
     }

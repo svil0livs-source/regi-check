@@ -287,7 +287,8 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
   const units = unit.flatMap((line) => {
     const u = UNIT_RE.exec(line.text);
     if (!u) return [];
-    const area = /구\s*조\s*([\d,]+(?:\s*\.\s*\d+)?)\s*([^\s\d]{0,3})/.exec(line.text);
+    // 구조 이름(「…구조」「…라멘조」「벽돌조」 등) 바로 뒤의 숫자가 전유 면적
+    const area = /조\s*([\d,]+(?:\s*\.\s*\d+)?)\s*([^\s\d]{0,3})/.exec(line.text);
     const unitText = fixFloor(compact(u[1])).replace(/층제/, "층 제") + "호";
     const unitOk = u[2] === "호";
     // 단위 기호(㎡)를 못 읽었으면 숫자 끝에 단위가 숫자로 잘못 붙었을 수 있다 (예: 49.98㎡ → "49.9811"). 그때는 확신하지 않는다

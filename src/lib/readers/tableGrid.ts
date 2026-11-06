@@ -156,3 +156,68 @@ export function isStruck(img: GrayImage, line: Box): boolean {
   }
   return false;
 }
+
+/** 상자 안 글자 덩어리(세로로 빈 틈 없이 이어진 검은 점 묶음)의 가로 범위와 세로 범위 */
+export interface Glyph {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/** 상자 안을 세로 빈 틈(2점 이상)으로 나눠 글자 덩어리들을 왼쪽부터 돌려준다 */
+export function glyphs(img: GrayImage, b: Box): Glyph[] {
+  const out: Glyph[] = [];
+  let cur: Glyph | null = null;
+  let gap = 0;
+  for (let x = b.x0; x < b.x1; x++) {
+    let top = -1, bottom = -1;
+    for (let y = b.y0; y < b.y1; y++) if (isDark(img, x, y)) {
+      if (top < 0) top = y;
+      bottom = y;
+    }
+    if (top >= 0) {
+      if (cur && gap < 2) {
+        cur.x1 = x;
+        cur.y0 = Math.min(cur.y0, top);
+        cur.y1 = Math.max(cur.y1, bottom);
+      } else {
+        if (cur) out.push(cur);
+        cur = { x0: x, x1: x, y0: top, y1: bottom };
+      }
+      gap = 0;
+    } else gap++;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/**
+ * 면적 숫자 뒤에 붙은 단위 기호(m²)가 시작하는 x 위치. 못 찾으면 null.
+ * 등기부의 ㎡는 "m" 뒤에 작은 위첨자 "²"가 붙은 모양이라 글자 읽기가 "1"·"'"·"ㅁ" 등으로 잘못 읽는다.
+ * - 맨 끝 덩어리가 줄 높이의 절반보다 작고 위쪽에 떠 있으면 위첨자 "²" → 그 앞 덩어리가 "m"
+ * - 위첨자가 m에 붙어 한 덩어리면, 맨 끝 덩어리가 숫자들보다 눈에 띄게 넓으면 그것이 "m²"
+ */
+export function unitGlyphStart(img: GrayImage, b: Box): number | null {
+  const gs = glyphs(img, b).filter((g) => g.x1 - g.x0 >= 1 && g.y1 - g.y0 >= 2);
+  if (gs.length < 3) return null;
+  const lineTop = Math.min(...gs.map((g) => g.y0));
+  const lineBottom = Math.max(...gs.map((g) => g.y1));
+  const h = lineBottom - lineTop;
+  const last = gs[gs.length - 1];
+  const raised = last.y1 - last.y0 < h * 0.5 && last.y1 < lineTop + h * 0.6;
+  if (raised) {
+    // "m"은 획 사이 틈 때문에 여러 덩어리로 나뉘기도 한다. 숫자보다 키가 작은(소문자 높이) 덩어리는 m의 일부로 본다.
+    // (소수점 "."은 아주 작아서 m의 일부로 보지 않는다)
+    let k = gs.length - 2;
+    const isLower = (g: Glyph) => g.y1 - g.y0 > h * 0.4 && g.y0 > lineTop + h * 0.2;
+    if (!isLower(gs[k])) return gs[k].x0;
+    while (k > 0 && isLower(gs[k - 1])) k--;
+    return gs[k].x0;
+  }
+  // 숫자 덩어리 폭의 가운데값과 비교 (점 "."은 좁아서 뺀다)
+  const widths = gs.slice(0, -1).map((g) => g.x1 - g.x0).filter((w) => w > h * 0.25).sort((a, b) => a - b);
+  if (!widths.length) return null;
+  const median = widths[Math.floor(widths.length / 2)];
+  return last.x1 - last.x0 > median * 1.3 ? last.x0 : null;
+}

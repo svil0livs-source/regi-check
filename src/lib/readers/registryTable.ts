@@ -8,7 +8,7 @@ import "server-only";
 import sharp from "sharp";
 import type { ParseLine } from "./registryParse";
 import { fuzzyIncludes } from "./registryParse";
-import { findGrid, hasInk, isStruck, type Box, type GrayImage } from "./tableGrid";
+import { findGrid, hasInk, isStruck, unitGlyphStart, type Box, type GrayImage } from "./tableGrid";
 import { recognizeImage, type OcrBoxLine, type RecognizeOptions } from "./tesseractOcr";
 
 const letters = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, "");
@@ -23,6 +23,8 @@ const looksStruck = (text: string) => (text.match(/[가-힣]\s*[-~ㅡ—]\s*[가
 interface BoxRead {
   lines: OcrBoxLine[];
   allStruck: boolean;
+  /** 사진 → 페이지 좌표 바꾸기 */
+  toPage: (b: Box) => Box;
 }
 
 /** 칸(또는 페이지 일부)을 잘라 손질해 읽고, 취소선 줄은 뺀다 */
@@ -37,18 +39,14 @@ async function readBox(page: Buffer, gray: GrayImage, box: Box, opts: RecognizeO
   if (opts.prep === "bin") pipe = pipe.threshold(opts.threshold ?? 170);
   const png = await pipe.png().toBuffer();
   const all = (await recognizeImage(png, opts.psm ?? "6", signal, digits ? "0123456789-()전 " : "")).filter((l) => l.text.trim());
-  const kept = all.filter((l) => {
-    if (looksStruck(l.text)) return false;
-    const b = {
-      x0: box.x0 + Math.round((l.bbox.x0 - 20) / scale),
-      y0: box.y0 + Math.round((l.bbox.y0 - 20) / scale),
-      x1: box.x0 + Math.round((l.bbox.x1 - 20) / scale),
-      y1: box.y0 + Math.round((l.bbox.y1 - 20) / scale),
-    };
-    const clamp = { x0: Math.max(box.x0, b.x0), y0: Math.max(box.y0, b.y0), x1: Math.min(box.x1, b.x1), y1: Math.min(box.y1, b.y1) };
-    return !isStruck(gray, clamp);
+  const toPage = (b: Box): Box => ({
+    x0: Math.max(box.x0, box.x0 + Math.round((b.x0 - 20) / scale)),
+    y0: Math.max(box.y0, box.y0 + Math.round((b.y0 - 20) / scale)),
+    x1: Math.min(box.x1, box.x0 + Math.round((b.x1 - 20) / scale)),
+    y1: Math.min(box.y1, box.y0 + Math.round((b.y1 - 20) / scale)),
   });
-  return { lines: kept, allStruck: all.length > 0 && kept.length === 0 };
+  const kept = all.filter((l) => !looksStruck(l.text) && !isStruck(gray, toPage(l.bbox)));
+  return { lines: kept, allStruck: all.length > 0 && kept.length === 0, toPage };
 }
 
 /**
@@ -112,11 +110,48 @@ export async function readTablePage(
     const read: BoxRead[] = [];
     // 갑구·을구 표(5칸)의 첫 칸은 순위번호: 숫자만 읽게 해 13을 18로 읽는 것 같은 실수를 줄인다
     const rankCol = row.cells.length === 5;
-    for (const [k, c] of row.cells.entries()) read.push(hasInk(gray, c) ? await readBox(page, gray, c, opts, signal, rankCol && k === 0) : { lines: [], allStruck: false });
+    const none: BoxRead = { lines: [], allStruck: false, toPage: (b) => b };
+    for (const [k, c] of row.cells.entries()) read.push(hasInk(gray, c) ? await readBox(page, gray, c, opts, signal, rankCol && k === 0) : none);
     // 등기목적·접수 칸 글자가 둘 다 모두 취소선이면 말소된 등기라 줄 전체를 버린다.
     // (순위번호 칸은 보지 않는다: 손으로 그린 동그라미·체크가 취소선처럼 보일 수 있다)
     if (read[1]?.allStruck && read[2]?.allStruck) continue;
+    for (const r of read) await fixAreas(page, gray, r, opts, signal);
     out.push(...joinCells(read.map((r) => r.lines)));
   }
   return out;
+}
+
+/**
+ * 전유부분 「건물내역」 칸의 면적 숫자를 다시 읽는다 (2026-11-06).
+ * ㎡(m 뒤 위첨자 ²)를 숫자 "1" 등으로 읽어 114.62㎡가 "114.621"이 되는 일이 잦아,
+ * 숫자 상자에서 단위 기호 모양을 찾아 잘라 내고 숫자만 다시 읽어 "114.62㎡"로 바꾼다.
+ * 단위 기호를 찾지 못하면 그대로 둔다(그러면 해석 단계가 확신하지 않음으로 둔다).
+ * 1동 건물 표의 층별 면적처럼 줄이 많은 칸은 대조에 쓰지 않으므로 하지 않는다.
+ */
+async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: RecognizeOptions, signal?: AbortSignal) {
+  // 구조 이름은 「…구조」 말고도 「철근콘크리트라멘조」「벽돌조」처럼 「조」로 끝난다
+  if (r.lines.length > 5 || !/조/.test(r.lines.map((l) => l.text).join(" "))) return;
+  for (const line of r.lines) {
+    // "114 .621'"처럼 숫자가 여러 단어로 쪼개질 수 있다: 숫자로 시작하는 첫 단어부터 줄 끝까지를 면적 자리로 본다
+    if (!/\d\s*\.\s*\d/.test(line.text)) continue;
+    const i = line.words.findIndex((w) => /^\d/.test(w.text));
+    if (i < 0 || !line.wordBoxes[i]) continue;
+    const tail = line.wordBoxes.slice(i);
+    const box = r.toPage({ x0: tail[0].x0, y0: Math.min(...tail.map((b) => b.y0)), x1: Math.max(...tail.map((b) => b.x1)), y1: Math.max(...tail.map((b) => b.y1)) });
+    const pad = { x0: box.x0 - 4, y0: box.y0 - 6, x1: Math.min(gray.width, box.x1 + 30), y1: box.y1 + 6 };
+    const cut = unitGlyphStart(gray, pad);
+    if (cut === null || cut - pad.x0 < 20) continue;
+    const scale = opts.scale / 1.5;
+    const w = cut - 2 - pad.x0, h = pad.y1 - pad.y0;
+    let pipe = sharp(page).extract({ left: pad.x0, top: pad.y0, width: w, height: h }).greyscale();
+    if (scale !== 1) pipe = pipe.resize({ width: Math.round(w * scale), kernel: "lanczos3" });
+    pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
+    const digits = await recognizeImage(await pipe.png().toBuffer(), "7", signal, "0123456789.,");
+    const num = digits.map((d) => d.text).join("").replace(/\s+/g, "");
+    if (!/^\d[\d,]*\.\d+$/.test(num)) continue;
+    const conf = Math.min(...digits.flatMap((d) => d.words.map((x) => x.confidence)));
+    line.words.splice(i, line.words.length - i, { text: `${num}㎡`, confidence: conf });
+    line.wordBoxes.splice(i);
+    line.text = line.words.map((x) => x.text).join(" ");
+  }
 }

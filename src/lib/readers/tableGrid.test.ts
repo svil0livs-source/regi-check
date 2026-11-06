@@ -1,6 +1,6 @@
 // 표 칸 찾기·취소선 찾기 시험 (2026-11-06). 그림을 직접 그려 시험한다.
 import { describe, expect, it } from "vitest";
-import { findGrid, isStruck, type GrayImage } from "./tableGrid";
+import { findGrid, isStruck, unitGlyphStart, type GrayImage } from "./tableGrid";
 
 function blank(w: number, h: number): GrayImage {
   return { width: w, height: h, data: new Uint8Array(w * h).fill(255) };
@@ -53,5 +53,31 @@ describe("isStruck", () => {
     const img = blank(400, 60);
     for (let x = 10; x < 390; x += 20) vline(img, x, 15, 45); // 글자 획처럼 세로 획만
     expect(isStruck(img, { x0: 0, y0: 10, x1: 400, y1: 50 })).toBe(false);
+  });
+});
+
+describe("unitGlyphStart (면적 뒤 ㎡ 기호 찾기)", () => {
+  /** 사각형 하나를 칠한다 */
+  const rect = (img: GrayImage, x0: number, y0: number, x1: number, y1: number) => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) img.data[y * img.width + x] = 0;
+  };
+  // 숫자 "1","1","4", ".", "6","2" (키 30) + "m"(소문자 키 20, 두 덩어리로 갈라짐) + 위첨자 "²"
+  const draw = () => {
+    const img = blank(300, 60);
+    for (const x of [10, 30, 50]) rect(img, x, 10, x + 12, 40);
+    rect(img, 70, 37, 73, 40); // 소수점
+    for (const x of [80, 100]) rect(img, x, 10, x + 14, 40);
+    rect(img, 125, 20, 129, 40); // m 첫 획
+    rect(img, 132, 20, 148, 40); // m 나머지
+    rect(img, 151, 10, 157, 19); // 위첨자 ²
+    return img;
+  };
+  it("갈라진 m까지 포함해 단위 기호가 시작하는 곳을 찾는다", () => {
+    expect(unitGlyphStart(draw(), { x0: 0, y0: 0, x1: 300, y1: 60 })).toBe(125);
+  });
+  it("단위 기호가 없으면 null", () => {
+    const img = blank(300, 60);
+    for (const x of [10, 30, 50]) rect(img, x, 10, x + 12, 40);
+    expect(unitGlyphStart(img, { x0: 0, y0: 0, x1: 300, y1: 60 })).toBeNull();
   });
 });
