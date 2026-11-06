@@ -175,15 +175,23 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
     const pad = { x0: box.x0 - 4, y0: box.y0 - 6, x1: Math.min(gray.width, box.x1 + 30), y1: box.y1 + 6 };
     const cut = unitGlyphStart(gray, pad);
     if (cut === null || cut - pad.x0 < 20) continue;
-    const scale = opts.scale / 1.5;
     const w = cut - 2 - pad.x0, h = pad.y1 - pad.y0;
-    let pipe = sharp(page).extract({ left: pad.x0, top: pad.y0, width: w, height: h }).greyscale();
-    if (scale !== 1) pipe = pipe.resize({ width: Math.round(w * scale), kernel: "lanczos3" });
-    pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
-    const digits = await recognizeImage(await pipe.png().toBuffer(), "7", signal, "0123456789.,");
-    const num = digits.map((d) => d.text).join("").replace(/\s+/g, "");
-    if (!/^\d[\d,]*\.\d+$/.test(num)) continue;
-    const conf = Math.min(...digits.flatMap((d) => d.words.map((x) => x.confidence)));
+    const readDigits = async (scale: number) => {
+      let pipe = sharp(page).extract({ left: pad.x0, top: pad.y0, width: w, height: h }).greyscale();
+      if (scale !== 1) pipe = pipe.resize({ width: Math.round(w * scale), kernel: "lanczos3" });
+      pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
+      const digits = await recognizeImage(await pipe.png().toBuffer(), "7", signal, "0123456789.,");
+      const num = digits.map((d) => d.text).join("").replace(/\s+/g, "");
+      return { num, conf: Math.min(...digits.flatMap((d) => d.words.map((x) => x.confidence))) };
+    };
+    // 숫자만 다시 읽으면 Tesseract가 없는 숫자를 지어내기도 한다 (예: 깨끗한 "59.82"를 "5359.82"로, 2026-11-06 시험 서류).
+    // 처음 읽은 글자(단위 기호가 숫자로 붙은 것)의 앞부분과 맞을 때만 쓴다. 안 맞으면 2배로 한 번 더 읽고, 그래도 안 맞으면 쓰지 않는다.
+    const first = tail.length ? line.words.slice(i).map((x) => x.text).join("").replace(/[^\d.,]/g, "") : "";
+    const fits = (n: string) => /^\d[\d,]*\.\d+$/.test(n) && first.startsWith(n);
+    let got = await readDigits(opts.scale / 1.5);
+    if (!fits(got.num)) got = await readDigits((opts.scale / 1.5) * 2);
+    if (!fits(got.num)) continue;
+    const { num, conf } = got;
     line.words.splice(i, line.words.length - i, { text: `${num}㎡`, confidence: conf });
     line.wordBoxes.splice(i);
     line.text = line.words.map((x) => x.text).join(" ");
