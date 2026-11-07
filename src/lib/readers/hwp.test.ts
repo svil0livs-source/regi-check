@@ -2,7 +2,7 @@
 // 글자 순서는 사용자가 준 양식 파일에서 꺼낸 그대로이고, 값만 가짜로 바꿨다.
 import { describe, expect, it } from "vitest";
 import { compareDocuments } from "@/lib/compare/compareDocuments";
-import { extractHwpFields } from "./hwpFields";
+import { extractHwpFields, isBlankForm } from "./hwpFields";
 import { HwpReadError, readHwpParagraphs } from "./hwpText";
 
 const sample = (mortgageLine: string) => [
@@ -70,5 +70,22 @@ describe("extractHwpFields (양도증서)", () => {
 describe("readHwpParagraphs", () => {
   it("한글 파일이 아니면 오류", () => {
     expect(() => readHwpParagraphs(Buffer.from("not a hwp"))).toThrow(HwpReadError);
+  });
+});
+
+describe("isBlankForm (빈 양식, 2026-11-07)", () => {
+  const blank = () => extractHwpFields(["채 권 양 도 인", "이전할 근저당권", "년 월 일 접수 제 호 순위 제 번으로 등기한 근저당권설정등기", "(채권최고액 : 금 원)", "채 무 자"]);
+  it("대조 항목이 하나도 없으면 빈 양식", () => {
+    expect(isBlankForm(blank())).toBe(true);
+  });
+  it("양도인 등록번호만 미리 인쇄돼 있어도 빈 양식", () => {
+    const f = blank();
+    f.mortgageeIdFront = { value: "110111" };
+    expect(isBlankForm(f)).toBe(true);
+  });
+  it("한 칸이라도 값이 있으면 빈 양식이 아니다", () => {
+    const f = blank();
+    f.parties.debtor = [{ value: "김가명" }];
+    expect(isBlankForm(f)).toBe(false);
   });
 });

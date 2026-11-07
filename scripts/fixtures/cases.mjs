@@ -202,8 +202,9 @@ export function buildCases() {
     if (p.err) errors.push({ key: p.err, desc: plant(c, p.err) });
     return {
       folder,
-      // 한글 파일 형식: 대부분 .hml, 몇 건은 신버전 .hwpx
-      format: i % 4 === 0 ? "hwpx" : "hml",
+      // 한글 파일 형식: 네 가지를 돌아가며 (2026-11-07: 실제로 많이 쓰는 구버전 .hwp 두 종류도 넣음)
+      //   .hwpx(신버전) / .hml(한글 XML) / .hwp(HWP 5.x, 한글 2002 이후) / .hwp(HWP 3.0, 한글 97 이하)
+      format: ["hwpx", "hml", "hwp5", "hwp3"][i % 4],
       look: p.look,
       ...c,
       expected: errors.length ? "불일치 있음" : "전부 일치",

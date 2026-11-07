@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MAX_REQUEST_BYTES, parseDocumentFields, parseImageMeta } from "@/lib/verify/caseRequest";
 import type { PageImageObject } from "@/lib/readers/pdfPages";
-import { prepareCase } from "./prepareCase";
+import { BLANK_FORM_MESSAGE, prepareCase } from "./prepareCase";
 import { PAGE_ROOM, readBody } from "./readRequests";
 
 /** 한글 XML 문서(.hml): 문단마다 한 줄 */
@@ -52,6 +52,11 @@ describe("prepareCase", () => {
     const shrunk = await prepareCase(HWP, pdf(MAX_REQUEST_BYTES + 1), reencode);
     expect(shrunk.ok && shrunk.reencoded).toBe(true);
     if (shrunk.ok) expect(shrunk.images[0].data.byteLength).toBe(1000);
+  });
+
+  it("빈 양식이면 등기부를 읽지 않고 처리 실패로 알린다 (2026-11-07)", async () => {
+    const blank = hml(["채 권 양 도 인", "이전할 근저당권", "년 월 일 접수 제 호 순위 제 번으로 등기한 근저당권설정등기", "(채권최고액 : 금 원)", "채 무 자"]);
+    expect(await prepareCase(blank, pdf(10))).toEqual({ ok: false, summary: "processing_failed", error: BLANK_FORM_MESSAGE });
   });
 
   it("한글 파일·PDF 형식이 아니면 처리 실패로 이유를 알린다", async () => {

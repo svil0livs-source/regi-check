@@ -86,11 +86,44 @@ function httpErrorMessage(status: number): string {
 /** 요청 하나를 보내고 JSON을 받는다. 서버 앞단 오류(413·504 등)는 화면 문구로 바꿔 던진다 */
 async function post<T>(folder: string, body: FormData, signal: AbortSignal): Promise<T> {
   // 2026-11-06 사용자 결정: 검증 시간 제한은 두지 않는다 (서버가 시간이 다 되면 스스로 멈추고 다음 요청으로 넘긴다)
-  const res = await fetch("/api/verify", { method: "POST", body, signal });
-  const json = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!res.ok || !json) throw new PrepareFailed({ folder, summary: "processing_failed", results: [], error: json?.error ?? httpErrorMessage(res.status) });
-  return json;
+  // 2026-11-07: 연결이 잠깐 끊기거나 중간 서버가 502·503을 주면 잠시 뒤 같은 요청을 다시 보낸다(최대 2번).
+  // 읽기·대조 요청은 서버에 아무것도 남기지 않아 같은 요청을 다시 보내도 결과가 같다.
+  for (let attempt = 0; ; attempt++) {
+    const retry = attempt < RETRIES;
+    let res: Response;
+    try {
+      res = await fetch("/api/verify", { method: "POST", body, signal });
+    } catch (err) {
+      if (signal.aborted || !retry) throw err;
+      await wait(RETRY_WAIT_MS * (attempt + 1), signal);
+      continue;
+    }
+    if (retry && (res.status === 502 || res.status === 503)) {
+      await wait(RETRY_WAIT_MS * (attempt + 1), signal);
+      continue;
+    }
+    const json = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+    if (!res.ok || !json) throw new PrepareFailed({ folder, summary: "processing_failed", results: [], error: json?.error ?? httpErrorMessage(res.status) });
+    return json;
+  }
 }
+
+/** 연결이 끊겼을 때 같은 요청을 다시 보내는 횟수와 기다리는 시간 (2026-11-07) */
+const RETRIES = 2;
+const RETRY_WAIT_MS = 3000;
+/** 멈추기를 누르면 기다리지 않고 바로 끝난다 */
+const wait = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => (clearTimeout(t), reject(signal.reason)), { once: true });
+  });
+
+/**
+ * 동시에 처리하는 건 수 (2026-11-07 사용자 요청: 30건이면 한 건씩으로는 1시간이 넘는다).
+ * 서버는 요청마다 따로 읽으니 여러 건을 함께 보내면 전체 시간이 준다. 읽는 방법은 같아 정확도는 그대로다.
+ * 건마다 등기부 페이지 사진(많게는 수십 MB)을 브라우저가 들고 있으므로 2건으로 둔다.
+ */
+const CONCURRENCY = 2;
 
 type PassResponse =
   | { ok: true; read: unknown; total: number }
@@ -238,47 +271,57 @@ export default function Verifier() {
     setRunning(true);
     const ac = new AbortController();
     abortRef.current = ac;
-    try {
-      for (const row of rows) {
-        if (ac.signal.aborted) break;
-        if (row.state !== "waiting") continue;
-        const { folder, hwpPath, pdfPath } = row.check;
-        const startedAt = Date.now();
-        const setProgress = (p: ProgressStep) =>
-          setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, progress: { ...p, startedAt } } : r)));
-        setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "running" } : r)));
-        setProgress({ stage: "prepare", pass: 0, passes: READ_PASSES_HINT, pagesDone: 0, pagesTo: 0, pages: 0 });
+    // 한 건 처리. 멈추기로 중단되면 false (그 건은 다시 「대기」)
+    const processOne = async (row: Row): Promise<boolean> => {
+      const { folder, hwpPath, pdfPath } = row.check;
+      const startedAt = Date.now();
+      const setProgress = (p: ProgressStep) =>
+        setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, progress: { ...p, startedAt } } : r)));
+      setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "running" } : r)));
+      setProgress({ stage: "prepare", pass: 0, passes: READ_PASSES_HINT, pagesDone: 0, pagesTo: 0, pages: 0 });
 
-        let outcome: CaseOutcome;
-        try {
-          // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (요청 한도 때문에, 2026-11-06)
-          const prepared = await prepareCase(files.get(hwpPath!)!, files.get(pdfPath!)!);
-          if (!prepared.ok) throw new PrepareFailed({ folder, summary: prepared.summary, results: [], error: prepared.error });
-          outcome = await runCase(folder, prepared, ac.signal, setProgress);
-        } catch (err) {
-          if (err instanceof PrepareFailed) {
-            outcome = err.outcome;
-          } else if (ac.signal.aborted) {
-            setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "waiting" } : r)));
-            break;
-          } else {
-            outcome = {
-              folder,
-              summary: "processing_failed",
-              results: [],
-              error: "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
-            };
-          }
+      let outcome: CaseOutcome;
+      try {
+        // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (요청 한도 때문에, 2026-11-06)
+        const prepared = await prepareCase(files.get(hwpPath!)!, files.get(pdfPath!)!);
+        if (!prepared.ok) throw new PrepareFailed({ folder, summary: prepared.summary, results: [], error: prepared.error });
+        outcome = await runCase(folder, prepared, ac.signal, setProgress);
+      } catch (err) {
+        if (err instanceof PrepareFailed) {
+          outcome = err.outcome;
+        } else if (ac.signal.aborted) {
+          setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "waiting" } : r)));
+          return false;
+        } else {
+          outcome = {
+            folder,
+            summary: "processing_failed",
+            results: [],
+            error: "서버와 연결이 끊겼습니다. 같은 폴더를 다시 고르면 이어서 처리합니다.",
+          };
         }
-
-        // 끝난 건은 바로 보관 (창이 닫혀도 이어서 처리할 수 있게). 처리 실패는 다시 시도할 수 있게 보관하지 않는다.
-        if (outcome.summary !== "processing_failed") {
-          const item = { signature: signatureOf(files.get(hwpPath!), files.get(pdfPath!)), outcome, savedAt: Date.now() };
-          if (!(await save(folder, item))) setStorageWarning(true);
-          setStored((m) => new Map(m).set(folder, item));
-        }
-        setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "done", outcome } : r)));
       }
+
+      // 끝난 건은 바로 보관 (창이 닫혀도 이어서 처리할 수 있게). 처리 실패는 다시 시도할 수 있게 보관하지 않는다.
+      if (outcome.summary !== "processing_failed") {
+        const item = { signature: signatureOf(files.get(hwpPath!), files.get(pdfPath!)), outcome, savedAt: Date.now() };
+        if (!(await save(folder, item))) setStorageWarning(true);
+        setStored((m) => new Map(m).set(folder, item));
+      }
+      setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, state: "done", outcome } : r)));
+      return true;
+    };
+
+    try {
+      // 대기 중인 건을 목록 순서대로 CONCURRENCY개씩 동시에 처리한다
+      const queue = rows.filter((r) => r.state === "waiting");
+      let next = 0;
+      const worker = async () => {
+        while (!ac.signal.aborted && next < queue.length) {
+          if (!(await processOne(queue[next++]))) return;
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
     } finally {
       setRunning(false);
       abortRef.current = null;

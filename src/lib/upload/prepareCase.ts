@@ -6,7 +6,7 @@
 //      그 페이지를 회색조 JPEG로 다시 저장해 줄인다 (fitImages.ts)
 // 읽은 글자는 이 함수 안에서만 쓰고 버린다. 로그에 남기지 않는다.
 import { isHangulFile, readHangulParagraphs } from "@/lib/readers/hangulFile";
-import { extractHwpFields } from "@/lib/readers/hwpFields";
+import { extractHwpFields, isBlankForm } from "@/lib/readers/hwpFields";
 import { HwpReadError } from "@/lib/readers/hwpText";
 import { selectPageImages, type PageImageObject } from "@/lib/readers/pdfPages";
 import { fitImages, grayJpegDict, type Reencode } from "./fitImages";
@@ -15,6 +15,9 @@ import { groupByPage, imageCost, PAGE_ROOM } from "./readRequests";
 export type PreparedCase =
   | { ok: true; fields: string; images: PageImageObject[]; reencoded: boolean }
   | { ok: false; summary: "file_problem" | "processing_failed"; error: string };
+
+/** 빈 양식 안내 (2026-11-07) */
+export const BLANK_FORM_MESSAGE = "한글 서류가 빈 양식입니다. 채무자·접수번호·채권최고액 등 대조할 값이 하나도 적혀 있지 않습니다. 작성을 마친 서류인지 확인해 주세요.";
 
 const isPdf = (b: Uint8Array) => String.fromCharCode(...b.subarray(0, 5)) === "%PDF-";
 
@@ -55,7 +58,10 @@ export async function prepareCase(hwpFile: Blob, pdfFile: Blob, reencode: Reenco
   if (!isHangulFile(hwpBytes)) return fail("한글 파일 형식이 아닙니다. (.hwp·.hwpx·.hml을 받습니다)");
   let fieldsJson: string;
   try {
-    fieldsJson = JSON.stringify(extractHwpFields(readHangulParagraphs(hwpBytes)));
+    const fields = extractHwpFields(readHangulParagraphs(hwpBytes));
+    // 빈 양식이면 등기부를 읽을 필요가 없다 (2026-11-07 사용자 결정)
+    if (isBlankForm(fields)) return fail(BLANK_FORM_MESSAGE);
+    fieldsJson = JSON.stringify(fields);
   } catch (err) {
     return fail(err instanceof HwpReadError ? err.message : "한글 파일을 읽지 못했습니다. 한글에서 다시 저장해 올려 주세요.");
   }
