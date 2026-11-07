@@ -204,6 +204,10 @@ function registryTables(c) {
       const purpose = t.length === 1 ? [`${t[0]}번근저당권설정등`, "기말소"] : [...t.slice(0, -1).map((x) => `${x}번근저당권설정,`), `${t[t.length - 1]}번근저당권설정`, "등기말소"];
       return { cells: [[e.rank], purpose, [e.date, e.receipt], [e.date, "해지"], [""]] };
     }
+    // 근저당권변경 부기등기: 바뀐 채권최고액만 적는다 (2026-11-07 추가)
+    if (e.kind === "change") {
+      return { struck: e.struck, cells: [[e.rank], [`${e.parent}번근저당권변경`], [e.date, e.receipt], [e.date, "변경계약"], [`채권최고액  금${won(e.amount)}원`]] };
+    }
     if (e.kind === "transfer") {
       const [name, id] = e.holder;
       return {
@@ -224,6 +228,8 @@ function registryTables(c) {
           `채권최고액  금${won(e.amount)}원`,
           `채무자  ${e.debtor}`,
           `      ${e.debtorAddr}`,
+          // 공동 채무자: 칸 이름 없이 이름 줄·주소 줄을 이어 적는다
+          ...(e.coDebtor ? [`      ${e.coDebtor.name}`, `      ${e.coDebtor.addr}`] : []),
           ...(name.length > 10 ? [`근저당권자  ${name}`, `            ${id}`] : [`근저당권자  ${name}  ${id}`]),
           `      ${e.holderAddr}`,
         ],
@@ -247,7 +253,7 @@ function summaryPage(c) {
   <table class="s"><tr><th>등기명의인</th><th>(주민)등록번호</th><th>최종지분</th><th>주 소</th><th>순위번호</th></tr>${row([`${c.owner} (소유자)`, "800101-*******", "단독소유", esc(c.eul.find((e) => e.debtorAddr)?.debtorAddr ?? ""), "2"])}</table>
   <h3>3. (근)저당권 및 전세권 등 ( 을구 )</h3>
   <table class="s"><tr><th>순위번호</th><th>등기목적</th><th>접수정보</th><th>주요등기사항</th><th>대상소유자</th></tr>
-  ${live.map((e) => row([e.rank, "근저당권설정", `${e.date}<br>${e.receipt}`, `채권최고액  금${won(e.amount)}원<br>근저당권자  ${esc(e.holder[0])}`, c.owner])).join("")}</table>
+  ${live.map((e) => row([e.rank, "근저당권설정", `${e.date}<br>${e.receipt}`, `채권최고액  금${won(e.newAmount ?? e.amount)}원<br>근저당권자  ${esc(e.holder[0])}`, c.owner])).join("")}</table>
   <div class="foot">출력일시 : 2026년 10월 28일 오후 4시50분46초<br>1/1</div>
 </div>`;
 }
@@ -476,8 +482,8 @@ if (!only) {
   writeFileSync(join(outDir, "정답표.json"), JSON.stringify(answers, null, 2), "utf8");
   writeFileSync(
     join(outDir, "정답표.md"),
-    "# 시험용 서류 20건 정답표 (가짜 서류)\n\n| 건 | 한글 형식 | 기대 결과 | 심어 둔 오류 |\n|---|---|---|---|\n" +
-      cases.map((c) => `| ${c.folder} | ${FORMAT_LABEL[c.format]} | ${c.expected} | ${c.errors.map((e) => `${e.key}: ${e.desc}`).join(", ") || "-"} |`).join("\n") +
+    "# 시험용 서류 20건 정답표 (가짜 서류)\n\n| 건 | 한글 형식 | 특징 | 기대 결과 | 심어 둔 오류 |\n|---|---|---|---|---|\n" +
+      cases.map((c) => `| ${c.folder} | ${FORMAT_LABEL[c.format]} | ${c.notes.join(", ") || "-"} | ${c.expected} | ${c.errors.map((e) => `${e.key}: ${e.desc}`).join(", ") || "-"} |`).join("\n") +
       "\n",
     "utf8",
   );
