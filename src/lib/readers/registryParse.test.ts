@@ -209,6 +209,16 @@ describe("parseRegistryLines: 실제 스캔본 모양", () => {
     expect(r.mortgages[0].mortgagee.text).toBe("가나생명보험주식회사");
   });
 
+  it("등기부 두 개를 한 PDF로 이어 붙이면 부동산 2개를 차례로 읽는다 (공동담보, 2026-11-07)", () => {
+    const holder = [L("근저당권자 가나생명보험주식회사 110111-0018443")];
+    const r = parseRegistryLines([...scan("제13층 제1301호  철근콘크리트구조 114.62ㅁ", holder), ...scan("제12층 제1201호  철근콘크리트구조 104.25ㅁ", holder)]);
+    expect(r.properties.map((p) => [p.unitNumber.text, p.area.text])).toEqual([
+      ["제13층 제1301호", "114.62㎡"],
+      ["제12층 제1201호", "104.25㎡"],
+    ]);
+    expect(r.mortgages.map((m) => m.receiptNumber.text)).toEqual(["제8310호", "제8310호"]);
+  });
+
   it("등록번호가 다음 줄로 넘어가도 앞 6자리를 읽는다", () => {
     const r = parseRegistryLines(scan("제13층 제1301호  철근콘크리트구조 114.62ㅁ", [L("근저당권자 가나생명보험주식회사"), L("110111-0018443")]));
     expect(r.mortgages[0].mortgageeIdFront.text).toBe("110111");

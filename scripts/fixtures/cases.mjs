@@ -42,11 +42,14 @@ function rng(seed) {
  * opt.targets: 이전할 근저당권 수(1~2), opt.transfer: 이전할 근저당권이 이미 다른 금융사로 이전됨,
  * opt.kamco: 이미 한국자산관리공사로 이전돼 있음(양도인은 그 전 권리자), opt.liveOthers: 이전하지 않는 다른 근저당권 수
  * opt.coDebtor: 채무자가 두 명(공동 채무자). 한글 서류에는 등기부와 반대 순서로 적는다 (2026-11-07 추가)
+ * opt.twoUnits: 담보가 같은 단지의 집합건물 두 호수(공동담보). 등기부 두 개를 한 PDF로 이어 붙인다 (2026-11-07 추가, 실제로는 합쳐서 올린다고 함)
  * opt.change: 이전할 근저당권에 「근저당권변경」 부기등기가 있어 채권최고액이 바뀜. 한글 서류에는 변경 뒤 금액 (2026-11-07 추가)
  */
 function baseCase(i, opt = {}) {
   const r = rng(i + 7);
   const place = pick(PLACES, i);
+  // 공동담보 두 번째 호수: 같은 동 한 층 아래, 면적도 다르게
+  const place2 = opt.twoUnits ? { ...place, floor: place.floor - 1, ho: place.ho - 100, area: (Number(place.area) - 10.37).toFixed(2) } : null;
   const debtor = pick(PEOPLE, i);
   const coDebtor = opt.coDebtor ? { name: pick(PEOPLE, i + 5), addr: pick(STREETS, i + 1) } : null;
   const lender = pick(LENDERS, i);
@@ -118,6 +121,7 @@ function baseCase(i, opt = {}) {
   const [assignorName, assignorId] = assignor;
   return {
     place,
+    place2,
     debtor,
     owner: debtor,
     eul,
@@ -128,6 +132,8 @@ function baseCase(i, opt = {}) {
       lotNumber: place.lot,
       unit: `제${place.floor}층 제${place.ho}호`,
       area: `${place.area}㎡`,
+      // 두 번째 부동산 (공동담보)
+      extra: place2 ? [{ location: place2.loc, lotNumber: place2.lot, unit: `제${place2.floor}층 제${place2.ho}호`, area: `${place2.area}㎡`, place: place2 }] : [],
       mortgages: targets.map((t) => ({ date: t.date, receipt: t.receipt, rank: t.rank })),
       amount: sum,
       assignorName,
@@ -148,14 +154,14 @@ const PLAN = [
   { opt: { kamco: true }, look: { skew: true } },
   { opt: { struckLater: true, change: true }, look: {} },
   { opt: { liveOthers: 2 }, look: { summary: true } },
-  { opt: {}, look: { pen: true, skew: true } },
+  { opt: { twoUnits: true }, look: { pen: true, skew: true } },
   // 여기부터 오류 건
   { opt: {}, look: { summary: true }, err: "mortgagee" },
   { opt: { liveOthers: 1 }, look: {}, err: "mortgageeIdFront" },
   { opt: { coDebtor: true }, look: { pen: true }, err: "debtor" },
   { opt: { struckLater: true }, look: {}, err: "location" },
   { opt: {}, look: { skew: true }, err: "lotNumber" },
-  { opt: { transfer: true }, look: { summary: true }, err: "unitNumber" },
+  { opt: { transfer: true, twoUnits: true }, look: { summary: true }, err: "unitNumber" },
   { opt: {}, look: {}, err: "area" },
   { opt: { liveOthers: 1, change: true }, look: { pen: true }, err: "maxClaimAmount" },
   { opt: {}, look: { summary: true }, err: "receiptNumber" },
@@ -184,6 +190,12 @@ function plant(c, key) {
       h.lotNumber = h.lotNumber.replace(/(\d)(\d)/, "$2$1") === h.lotNumber ? h.lotNumber + "1" : h.lotNumber.replace(/(\d)(\d)/, "$2$1");
       return `지번 숫자 순서 바뀜`;
     case "unitNumber":
+      // 부동산이 두 개면 두 번째 부동산의 호수를 틀리게
+      if (h.extra.length) {
+        const x = h.extra[0];
+        x.unit = x.unit.replace(/(\d)(\d)호$/, "$2$1호") === x.unit ? x.unit.replace(/호$/, "1호") : x.unit.replace(/(\d)(\d)호$/, "$2$1호");
+        return `두 번째 부동산 호수 끝 두 자리 바뀜`;
+      }
       h.unit = h.unit.replace(/(\d)(\d)호$/, "$2$1호") === h.unit ? h.unit.replace(/호$/, "1호") : h.unit.replace(/(\d)(\d)호$/, "$2$1호");
       return `호수 끝 두 자리 바뀜`;
     case "area":
@@ -231,6 +243,7 @@ export function buildCases() {
         p.opt.kamco && "이미 한국자산관리공사로 이전됨",
         p.opt.coDebtor && "공동 채무자(순서 다름)",
         p.opt.change && "근저당권변경",
+        p.opt.twoUnits && "부동산 2개(등기부 2개를 한 PDF로)",
         p.opt.liveOthers && `다른 근저당권 ${p.opt.liveOthers}건`,
       ].filter(Boolean),
       ...c,

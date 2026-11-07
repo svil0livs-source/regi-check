@@ -113,6 +113,32 @@ describe("verifyCase: 양도인 = 지금 근저당권자", () => {
   });
 });
 
+describe("verifyCase: 부동산 2개 공동담보 (등기부 2개를 한 PDF로, 2026-11-07)", () => {
+  const two = (unit2: string): [DocumentFields, RegistryRead] => {
+    const p2 = { location: "경기도 성남시 분당구 서현동", lotNumber: "255-1", unitNumber: "제7층 제씨-709호", area: "70.5㎡" };
+    const h = hwp();
+    h.properties.push({ location: v(p2.location), lotNumber: v(p2.lotNumber), unitNumber: v(unit2), area: v(p2.area) });
+    const r = reg([mortgage(), mortgage()]); // 같은 근저당권이 두 등기부 을구에 똑같이 나온다
+    r.properties.push({ location: o(p2.location), lotNumber: o(p2.lotNumber), unitNumber: o(p2.unitNumber), area: o(p2.area) });
+    return [h, r];
+  };
+
+  it("같은 접수번호·같은 날짜로 두 번 나온 근저당권은 한 건으로 보고 부동산 2개를 각각 대조 → 전부 일치", () => {
+    expect(summarizeCase(verifyCase(...two("제7층 제씨-709호")))).toBe("all_match");
+  });
+
+  it("두 번째 부동산 호수가 다르면 그 부동산의 호수만 불일치", () => {
+    const rs = verifyCase(...two("제7층 제씨-790호"));
+    expect(rs.filter((r) => r.status !== "match").map((r) => r.key)).toEqual(["unitNumber"]);
+  });
+
+  it("두 등기부에서 읽은 같은 접수번호의 날짜가 다르면 고르지 않는다(확인 필요)", () => {
+    const [h, r] = two("제7층 제씨-709호");
+    r.mortgages[1] = mortgage({ registrationDate: o("2020년3월18일") });
+    expect(summarizeCase(verifyCase(h, r))).not.toBe("all_match");
+  });
+});
+
 describe("verifyCase: 등기부에 근저당권·표제부가 없을 때", () => {
   it("근저당권이 없으면 접수번호 불일치, 딸린 항목 확인 필요", () => {
     const rs = verifyCase(hwp(), reg([]));
