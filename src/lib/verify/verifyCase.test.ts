@@ -126,3 +126,18 @@ describe("verifyCase: 등기부에 근저당권·표제부가 없을 때", () =>
     expect(status(verifyCase(hwp(), r), "location")).toEqual(["needs_review"]);
   });
 });
+
+describe("verifyCase: 한글 서류에 접수번호가 없을 때 (2026-11-07)", () => {
+  it("등기부를 탓하지 않고 한글 서류에서 읽지 못했다고 알린다", () => {
+    const h = hwp();
+    h.mortgages = [{ receiptNumber: v(null), registrationDate: v(null), rank: v(null) }];
+    h.parties.mortgagee = [v(null)];
+    h.maxClaimAmount = v(null);
+    const rs = verifyCase(h, reg([mortgage(), second()]));
+    for (const key of ["receiptNumber", "mortgagee", "maxClaimAmount"]) {
+      const r = rs.find((x) => x.key === key)!;
+      expect(r.status).toBe("unreadable");
+      expect(r.reason).toMatch(/^한글 서류에서 값을 읽지 못했습니다\. 한글 서류에 접수번호가 없어/);
+    }
+  });
+});

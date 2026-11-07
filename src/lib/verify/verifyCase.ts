@@ -148,6 +148,25 @@ function hwpUnreadable(hwp: DocumentFields, f: Forced): boolean {
   return false;
 }
 
+/** 고른 근저당권에 딸린 항목 (근저당권을 고르지 못하면 등기부 쪽 값이 비는 항목) */
+const MORTGAGE_KEYS: FieldKey[] = ["mortgagee", "debtor", "maxClaimAmount", "mortgageeIdFront", "receiptNumber", "registrationDate", "rank"];
+const MORTGAGE_ROW_KEYS: FieldKey[] = ["receiptNumber", "registrationDate", "rank"];
+
+/**
+ * 한글 서류에 값이 없어 등기부의 근저당권을 고르지 못한 경우, 「두 문서 모두에서 값을 읽지 못했습니다」는 틀린 말이다
+ * (등기부는 읽었지만 어느 근저당권과 비교할지 몰라 값을 꺼내지 않았을 뿐). 한글 서류 탓임을 밝힌다 (2026-11-07).
+ */
+function explainUnpicked(results: FieldResult[], picked: (RegistryMortgage | undefined)[]): FieldResult[] {
+  if (picked.every(Boolean)) return results;
+  return results.map((r) =>
+    r.status === "unreadable" && r.hwpValue === null && r.registryValue === null && MORTGAGE_KEYS.includes(r.key) &&
+    // 접수번호·접수일·순위번호의 index는 몇 번째 근저당권, 양도인·채무자의 index는 몇 번째 사람이다
+    (MORTGAGE_ROW_KEYS.includes(r.key) ? !picked[(r.index ?? 1) - 1] : picked.every((m) => !m))
+      ? { ...r, reason: "한글 서류에서 값을 읽지 못했습니다. 한글 서류에 접수번호가 없어 등기부등본에서 대조할 근저당권도 고르지 못했습니다." }
+      : r,
+  );
+}
+
 /** 건 하나를 대조한다: 근저당권 찾기 → 항목 비교 → 고르지 못한 항목은 강제 결과로 바꾸기 */
 export function verifyCase(hwp: DocumentFields, reg: RegistryRead): FieldResult[] {
   const { picked, forced } = selectMortgages(reg, hwp);
@@ -163,7 +182,7 @@ export function verifyCase(hwp: DocumentFields, reg: RegistryRead): FieldResult[
   if (reg.properties.length === 0) {
     for (const key of PROPERTY_KEYS) forced.push({ key, status: "needs_review", reason: "등기부등본에서 집합건물 표제부를 찾지 못했습니다. 토지·일반건물 등기부는 부동산 표시를 자동으로 대조하지 않으니 직접 확인해 주세요." });
   }
-  const results = compareDocuments(hwp, registryToFields(reg, picked));
+  const results = explainUnpicked(compareDocuments(hwp, registryToFields(reg, picked)), picked);
   const active = forced.filter((f) => !hwpUnreadable(hwp, f));
   if (active.length === 0) return results;
   // 강제 결과가 있는 항목(같은 key, index가 있으면 같은 index)의 비교 결과를 바꾼다

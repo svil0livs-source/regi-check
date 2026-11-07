@@ -108,3 +108,19 @@ export function extractHwpFields(paragraphs: string[]): DocumentFields {
     mortgageeIdFront: read(idFront),
   };
 }
+
+/**
+ * 대조 항목이 하나도 적혀 있지 않은 빈 양식인지 (2026-11-07 사용자 결정: 빈 양식은 등기부를 읽지 않고 「처리 실패」로 알린다).
+ * 한 칸이라도 값이 있으면 빈 양식이 아니다 (그런 건은 평소대로 대조해 빈 칸을 「읽지 못함」으로 보여 준다).
+ */
+export function isBlankForm(f: DocumentFields): boolean {
+  const values = [
+    ...f.parties.mortgagee,
+    ...f.parties.debtor,
+    ...f.properties.flatMap((p) => [p.location, p.lotNumber, p.unitNumber, p.area]),
+    ...f.mortgages.flatMap((m) => [m.receiptNumber, m.registrationDate, m.rank]),
+    f.maxClaimAmount,
+    f.mortgageeIdFront,
+  ];
+  return values.every((v) => v.value === null);
+}
