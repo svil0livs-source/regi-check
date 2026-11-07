@@ -1,10 +1,10 @@
 // 시험용 서류 20건을 만든다 (2026-11-06, 실제 양식 기준).
-//   한글 파일: 「위임장 + 확정채권 및 근저당권 양도증서」 문단 순서 그대로 .hml(한글 XML) 또는 .hwpx(신버전)로 쓴다.
-//              (바이너리 .hwp는 한글 프로그램 없이 만들 수 없어서 같은 글자를 담은 다른 한글 형식으로 만든다)
+//   한글 파일: 「위임장 + 확정채권 및 근저당권 양도증서」 문단 순서 그대로 .hwpx(신버전)·.hml(한글 XML)·.hwp(HWP 5.x)·.hwp(HWP 3.0)를 돌아가며 쓴다.
+//              .hwp 두 종류는 문단 글자만 담은 최소 파일이라(hwpBinary.mjs) 앱은 읽지만 한글 프로그램에서는 열리지 않을 수 있다 (2026-11-07)
 //   등기부: 실제 「등기사항전부증명서(말소사항 포함) - 집합건물」 모양의 표를 브라우저로 그려 300dpi 회색조 스캔처럼 만든다.
 //           말소 줄 취소선, 요약(참고용) 페이지, 갑구, 순위번호 볼펜 동그라미·체크, 「열람용」 흐린 글자, 잡티를 넣는다.
 // 모든 값은 가짜다 (cases.mjs). 결과물(tests/fixtures/)은 .gitignore 대상이라 커밋되지 않는다.
-// 실행: node scripts/fixtures/make-fixtures.mjs   (Playwright·Chromium, curl 필요. 글꼴은 Noto Serif KR(OFL)을 처음 한 번 내려받아 tests/fixtures-build/에 둔다)
+// 실행: node scripts/fixtures/make-fixtures.mjs   (한글 파일만 다시: HANGUL_ONLY=1) (Playwright·Chromium, curl 필요. 글꼴은 Noto Serif KR(OFL)을 처음 한 번 내려받아 tests/fixtures-build/에 둔다)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32, deflateRawSync } from "node:zlib";
 import { buildCases, won } from "./cases.mjs";
+import { hwp3, hwp5 } from "./hwpBinary.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const require = createRequire(join(root, "package.json"));
@@ -416,18 +417,32 @@ function pdfOf(jpegs, sizes) {
 // ── 만들기 ──────────────────────────────────────────────────────────
 const cases = buildCases();
 const only = process.env.CASES?.split(",");
-if (existsSync(outDir) && !only) rmSync(outDir, { recursive: true });
+// HANGUL_ONLY=1: 등기부는 그대로 두고 한글 파일만 다시 쓴다 (형식만 바꿀 때, 몇 초)
+const hangulOnly = process.env.HANGUL_ONLY === "1";
+const HANGUL_FILES = ["양도증서.hwpx", "양도증서.hml", "양도증서.hwp"];
+const HANGUL_EXT = { hwpx: ".hwpx", hml: ".hml", hwp5: ".hwp", hwp3: ".hwp" };
+/** 한글 파일 하나를 정한 형식으로 쓴다. 이 생성기가 전에 만든 다른 형식 한글 파일은 지운다 (건마다 한글 파일은 하나) */
+function writeHangul(c, dir) {
+  const paras = hwpParagraphs(c);
+  const name = `양도증서${HANGUL_EXT[c.format]}`;
+  for (const f of HANGUL_FILES) if (f !== name && existsSync(join(dir, f))) rmSync(join(dir, f));
+  const data = { hwpx: () => hwpx(paras), hml: () => Buffer.from(hml(paras), "utf8"), hwp5: () => hwp5(paras), hwp3: () => hwp3(paras) }[c.format]();
+  writeFileSync(join(dir, name), data);
+}
+if (existsSync(outDir) && !only && !hangulOnly) rmSync(outDir, { recursive: true });
 mkdirSync(outDir, { recursive: true });
 
-const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 794, height: 1123 }, deviceScaleFactor: 3.125 });
+const browser = hangulOnly ? null : await chromium.launch();
+const ctx = await browser?.newContext({ viewport: { width: 794, height: 1123 }, deviceScaleFactor: 3.125 });
 for (const c of cases) {
   if (only && !only.includes(c.folder)) continue;
   const dir = join(outDir, c.folder);
   mkdirSync(dir, { recursive: true });
-  const paras = hwpParagraphs(c);
-  if (c.format === "hwpx") writeFileSync(join(dir, "양도증서.hwpx"), hwpx(paras));
-  else writeFileSync(join(dir, "양도증서.hml"), hml(paras), "utf8");
+  writeHangul(c, dir);
+  if (hangulOnly) {
+    console.log(`${c.folder}: ${c.format} (한글 파일만)`);
+    continue;
+  }
 
   const page = await ctx.newPage();
   // 글꼴 파일 옆에 페이지를 써서 연다 (페이지 안에 글꼴을 통째로 넣기엔 크다)
@@ -452,16 +467,17 @@ for (const c of cases) {
   writeFileSync(join(dir, "등기사항전부증명서.pdf"), pdfOf(jpegs, sizes));
   console.log(`${c.folder}: ${c.format}, 등기부 ${n}쪽, ${c.expected}${c.errors.length ? ` (${c.errors.map((e) => e.desc).join(", ")})` : ""}`);
 }
-await browser.close();
+await browser?.close();
 
 // 정답표 (시험이 읽는 json과 사람이 보는 md)
+const FORMAT_LABEL = { hwpx: ".hwpx", hml: ".hml", hwp5: ".hwp (5.x)", hwp3: ".hwp (3.0)" };
 const answers = cases.map((c) => ({ folder: c.folder, expected: c.expected, errors: c.errors.map((e) => ({ key: e.key, desc: e.desc })) }));
 if (!only) {
   writeFileSync(join(outDir, "정답표.json"), JSON.stringify(answers, null, 2), "utf8");
   writeFileSync(
     join(outDir, "정답표.md"),
     "# 시험용 서류 20건 정답표 (가짜 서류)\n\n| 건 | 한글 형식 | 기대 결과 | 심어 둔 오류 |\n|---|---|---|---|\n" +
-      cases.map((c) => `| ${c.folder} | .${c.format} | ${c.expected} | ${c.errors.map((e) => `${e.key}: ${e.desc}`).join(", ") || "-"} |`).join("\n") +
+      cases.map((c) => `| ${c.folder} | ${FORMAT_LABEL[c.format]} | ${c.expected} | ${c.errors.map((e) => `${e.key}: ${e.desc}`).join(", ") || "-"} |`).join("\n") +
       "\n",
     "utf8",
   );

@@ -78,6 +78,11 @@ describe("isBlankForm (빈 양식, 2026-11-07)", () => {
   it("대조 항목이 하나도 없으면 빈 양식", () => {
     expect(isBlankForm(blank())).toBe(true);
   });
+  it("양도인 등록번호만 미리 인쇄돼 있어도 빈 양식", () => {
+    const f = blank();
+    f.mortgageeIdFront = { value: "110111" };
+    expect(isBlankForm(f)).toBe(true);
+  });
   it("한 칸이라도 값이 있으면 빈 양식이 아니다", () => {
     const f = blank();
     f.parties.debtor = [{ value: "김가명" }];

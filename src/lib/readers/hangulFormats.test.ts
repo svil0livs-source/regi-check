@@ -106,3 +106,22 @@ for (const [label, dir, ext] of FORMATS) {
     });
   });
 }
+
+describe("시험용 .hwp 만들기(scripts/fixtures/hwpBinary.mjs)와 앱 읽기가 맞는지 (2026-11-07)", async () => {
+  const { hwp3, hwp5 } = await import("../../../scripts/fixtures/hwpBinary.mjs");
+  // 한글 완성형 11,172자 전부 + 양식에 나오는 기호
+  const syllables = Array.from({ length: 11172 }, (_, i) => String.fromCharCode(0xac00 + i)).join("");
+  const paras = [
+    "【부동산의 표시】",
+    "구조 및 면적 : 철근콘크리트구조 114.62㎡",
+    "『금융회사부실자산등의 효율적 처리』제4조에 의하여 ㅇㅇㅇ(가) 양도",
+    "2020년03월13일 접수 제14475호 순위 제3번으로 등기한 근저당권설정등기, (채권최고액 : 금 504,000,000원)",
+    syllables,
+  ];
+  it("HWP 5.x로 쓴 글자를 그대로 읽는다", () => {
+    expect(readHangulParagraphs(hwp5(paras))).toEqual(paras);
+  });
+  it("HWP 3.0으로 쓴 글자를 그대로 읽는다 (조합형 한글 포함)", () => {
+    expect(readHangulParagraphs(hwp3(paras))).toEqual(paras);
+  });
+});
