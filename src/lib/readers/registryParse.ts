@@ -124,6 +124,15 @@ function idFrontAfter(line: ParseLine, keyword: RegExp, confMin: number, next?: 
   return v(front, !/^\d{6}$/.test(front) || valueConfidence(line, front) < confMin);
 }
 
+/**
+ * 공동 채무자 이름 줄: 오른쪽 칸 글자가 띄어쓰기 없는 한글 이름(회사 이름 포함) 하나뿐인 줄.
+ * 주소 줄(숫자·띄어쓰기·괄호가 있음)은 이름이 아니다. 이름 글자는 고치지 않는다.
+ */
+function coDebtorName(lineText: string): string | undefined {
+  const cell = lastCell(lineText).trim();
+  return /^[가-힣]{2,20}$/.test(cell) ? cell : undefined;
+}
+
 /** 칸 사이 넓은 띄어쓰기로 나눈 마지막 덩어리 (오른쪽 「권리자 및 기타사항」 칸) */
 const lastCell = (s: string) => s.split(/\s{2,}/).filter((x) => x.trim()).pop() ?? "";
 
@@ -193,10 +202,19 @@ function parseMortgageBlock(block: ParseLine[], confMin: number): RegistryMortga
   const debtors: OcrValue[] = [];
   let mortgagee: OcrValue = v(null, false);
   let mortgageeIdFront: OcrValue = v(null, false);
+  // 채무자 칸 이름 줄 다음부터 근저당권자 줄 전까지: 공동 채무자는 칸 이름 없이 이름 줄·주소 줄이 이어진다 (2026-11-07)
+  let inDebtors = false;
   block.forEach((line, i) => {
     const d = nameAfter(line.text, DEBTOR_KW);
-    if (d) debtors.push(valueFrom(line, d, confMin));
     const m = nameAfter(line.text, HOLDER_KW);
+    if (d) {
+      debtors.push(valueFrom(line, d, confMin));
+      inDebtors = true;
+    } else if (inDebtors && !m) {
+      const name = coDebtorName(line.text);
+      if (name) debtors.push(valueFrom(line, name, confMin));
+    }
+    if (m) inDebtors = false;
     if (m && mortgagee.text === null) {
       mortgagee = valueFrom(line, m, confMin);
       mortgageeIdFront = idFrontAfter(line, HOLDER_KW, confMin, block[i + 1]);

@@ -40,12 +40,11 @@ const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 // ── 한글 파일 ───────────────────────────────────────────────────────
 const pad2 = (d) => d.replace(/(\d{4})년(\d{1,2})월(\d{1,2})일/, (_, y, m, dd) => `${y}년${m.padStart(2, "0")}월${dd.padStart(2, "0")}일`);
 
-/** 실제 양식의 문단 순서 (사용자가 준 빈 양식·가짜로 채운 양식 기준) */
-function hwpParagraphs(c) {
-  const h = c.hwp;
-  const p = c.place;
-  const property = [
-    "1. 1동의 건물의 표시",
+/** 부동산 하나의 표시 문단들 */
+function propertyBlock(h, n) {
+  const p = h.place;
+  return [
+    `${n}. 1동의 건물의 표시`,
     `${h.location} ${h.lotNumber}`,
     `${p.complex} ${p.dong}`,
     `[도로명주소]${p.road}`,
@@ -59,6 +58,14 @@ function hwpParagraphs(c) {
     "대지권의 종류: 소유권",
     `대지권의 비율: ${p.land}분의 ${p.ratio}`,
   ];
+}
+
+/** 실제 양식의 문단 순서 (사용자가 준 빈 양식·가짜로 채운 양식 기준) */
+function hwpParagraphs(c) {
+  const h = c.hwp;
+  // 부동산마다 「N. 1동의 건물의 표시」 묶음 하나 (공동담보면 두 개)
+  const property = [{ location: h.location, lotNumber: h.lotNumber, unit: h.unit, area: h.area, place: c.place }, ...h.extra].flatMap((x, n) => propertyBlock(x, n + 1));
+
   const mortgageLine =
     h.mortgages.map((m) => `${pad2(m.date)} 접수 ${m.receipt} 순위 제${m.rank}번으로 등기한 근저당권설정등기`).join(", ") +
     ". 단, 근저당권은 채권과 함께 이전함.";
@@ -204,6 +211,10 @@ function registryTables(c) {
       const purpose = t.length === 1 ? [`${t[0]}번근저당권설정등`, "기말소"] : [...t.slice(0, -1).map((x) => `${x}번근저당권설정,`), `${t[t.length - 1]}번근저당권설정`, "등기말소"];
       return { cells: [[e.rank], purpose, [e.date, e.receipt], [e.date, "해지"], [""]] };
     }
+    // 근저당권변경 부기등기: 바뀐 채권최고액만 적는다 (2026-11-07 추가)
+    if (e.kind === "change") {
+      return { struck: e.struck, cells: [[e.rank], [`${e.parent}번근저당권변경`], [e.date, e.receipt], [e.date, "변경계약"], [`채권최고액  금${won(e.amount)}원`]] };
+    }
     if (e.kind === "transfer") {
       const [name, id] = e.holder;
       return {
@@ -224,6 +235,8 @@ function registryTables(c) {
           `채권최고액  금${won(e.amount)}원`,
           `채무자  ${e.debtor}`,
           `      ${e.debtorAddr}`,
+          // 공동 채무자: 칸 이름 없이 이름 줄·주소 줄을 이어 적는다
+          ...(e.coDebtor ? [`      ${e.coDebtor.name}`, `      ${e.coDebtor.addr}`] : []),
           ...(name.length > 10 ? [`근저당권자  ${name}`, `            ${id}`] : [`근저당권자  ${name}  ${id}`]),
           `      ${e.holderAddr}`,
         ],
@@ -247,7 +260,7 @@ function summaryPage(c) {
   <table class="s"><tr><th>등기명의인</th><th>(주민)등록번호</th><th>최종지분</th><th>주 소</th><th>순위번호</th></tr>${row([`${c.owner} (소유자)`, "800101-*******", "단독소유", esc(c.eul.find((e) => e.debtorAddr)?.debtorAddr ?? ""), "2"])}</table>
   <h3>3. (근)저당권 및 전세권 등 ( 을구 )</h3>
   <table class="s"><tr><th>순위번호</th><th>등기목적</th><th>접수정보</th><th>주요등기사항</th><th>대상소유자</th></tr>
-  ${live.map((e) => row([e.rank, "근저당권설정", `${e.date}<br>${e.receipt}`, `채권최고액  금${won(e.amount)}원<br>근저당권자  ${esc(e.holder[0])}`, c.owner])).join("")}</table>
+  ${live.map((e) => row([e.rank, "근저당권설정", `${e.date}<br>${e.receipt}`, `채권최고액  금${won(e.newAmount ?? e.amount)}원<br>근저당권자  ${esc(e.holder[0])}`, c.owner])).join("")}</table>
   <div class="foot">출력일시 : 2026년 10월 28일 오후 4시50분46초<br>1/1</div>
 </div>`;
 }
@@ -444,26 +457,31 @@ for (const c of cases) {
     continue;
   }
 
-  const page = await ctx.newPage();
-  // 글꼴 파일 옆에 페이지를 써서 연다 (페이지 안에 글꼴을 통째로 넣기엔 크다)
-  const htmlPath = join(buildDir, `registry-${c.folder}.html`);
-  writeFileSync(htmlPath, registryHtml(c), "utf8");
-  await page.goto(`file://${htmlPath}`, { waitUntil: "load" });
-  const font = await page.evaluate(async () => (await document.fonts.load("16px 'RegFont'", "가나다123")).length > 0);
-  if (!font) throw new Error("글꼴을 불러오지 못했습니다");
-  await page.evaluate(() => window.paginate(window.SPEC));
-  const pages = page.locator(".page");
-  const n = await pages.count();
+  // 부동산마다 등기부 하나. 공동담보(부동산 2개)면 두 등기부를 한 PDF로 이어 붙인다 (사용자가 실제로 합쳐서 올림, 2026-11-07)
   const jpegs = [];
   const sizes = [];
-  for (let k = 0; k < n; k++) {
-    const png = await pages.nth(k).screenshot({ type: "png" });
-    const jpg = await scan(png, Number(c.folder.slice(-4)) * 100 + k, !!c.look.skew && k % 2 === 1);
-    const meta = await sharp(jpg).metadata();
-    jpegs.push(jpg);
-    sizes.push({ width: meta.width, height: meta.height });
+  for (const [r, place] of [c.place, c.place2].filter(Boolean).entries()) {
+    const page = await ctx.newPage();
+    // 글꼴 파일 옆에 페이지를 써서 연다 (페이지 안에 글꼴을 통째로 넣기엔 크다)
+    const htmlPath = join(buildDir, `registry-${c.folder}-${r + 1}.html`);
+    writeFileSync(htmlPath, registryHtml({ ...c, place }), "utf8");
+    await page.goto(`file://${htmlPath}`, { waitUntil: "load" });
+    const font = await page.evaluate(async () => (await document.fonts.load("16px 'RegFont'", "가나다123")).length > 0);
+    if (!font) throw new Error("글꼴을 불러오지 못했습니다");
+    await page.evaluate(() => window.paginate(window.SPEC));
+    const pages = page.locator(".page");
+    const count = await pages.count();
+    for (let k = 0; k < count; k++) {
+      const png = await pages.nth(k).screenshot({ type: "png" });
+      const at = jpegs.length;
+      const jpg = await scan(png, Number(c.folder.slice(-4)) * 100 + at, !!c.look.skew && at % 2 === 1);
+      const meta = await sharp(jpg).metadata();
+      jpegs.push(jpg);
+      sizes.push({ width: meta.width, height: meta.height });
+    }
+    await page.close();
   }
-  await page.close();
+  const n = jpegs.length;
   writeFileSync(join(dir, "등기사항전부증명서.pdf"), pdfOf(jpegs, sizes));
   console.log(`${c.folder}: ${c.format}, 등기부 ${n}쪽, ${c.expected}${c.errors.length ? ` (${c.errors.map((e) => e.desc).join(", ")})` : ""}`);
 }
@@ -476,8 +494,8 @@ if (!only) {
   writeFileSync(join(outDir, "정답표.json"), JSON.stringify(answers, null, 2), "utf8");
   writeFileSync(
     join(outDir, "정답표.md"),
-    "# 시험용 서류 20건 정답표 (가짜 서류)\n\n| 건 | 한글 형식 | 기대 결과 | 심어 둔 오류 |\n|---|---|---|---|\n" +
-      cases.map((c) => `| ${c.folder} | ${FORMAT_LABEL[c.format]} | ${c.expected} | ${c.errors.map((e) => `${e.key}: ${e.desc}`).join(", ") || "-"} |`).join("\n") +
+    "# 시험용 서류 20건 정답표 (가짜 서류)\n\n| 건 | 한글 형식 | 특징 | 기대 결과 | 심어 둔 오류 |\n|---|---|---|---|---|\n" +
+      cases.map((c) => `| ${c.folder} | ${FORMAT_LABEL[c.format]} | ${c.notes.join(", ") || "-"} | ${c.expected} | ${c.errors.map((e) => `${e.key}: ${e.desc}`).join(", ") || "-"} |`).join("\n") +
       "\n",
     "utf8",
   );
