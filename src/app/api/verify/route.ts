@@ -6,7 +6,9 @@
 //      큰 등기부는 한 번 읽기를 조각으로 나눈다: chunk(0부터), last(마지막 조각이면 "1"), carry(앞 조각이 준 꾸러미).
 //      마지막이 아닌 조각은 { ok, carry }를 돌려준다(읽은 줄을 서버만 열 수 있게 암호화한 것, readCarry.ts).
 //   2) step=compare : { folder, fields(한글 서류 값 JSON), reads(모은 read 목록 JSON) } → { folder, summary, results }
-import { MAX_REQUEST_BYTES, parseDocumentFields, parseImageMeta, parseRegistryReads, toPageObjects } from "@/lib/verify/caseRequest";
+//      2026-11-09: reads 대신 readGroups(read 목록의 목록)도 받는다. 묶음마다 다수결한 뒤 합친다
+//      (스캔본 읽기 묶음 + 글자 PDF를 브라우저가 바로 읽은 결과. 한 건에 등기부 PDF 여러 개)
+import { MAX_REQUEST_BYTES, parseDocumentFields, parseImageMeta, parseRegistryReadGroups, parseRegistryReads, toPageObjects } from "@/lib/verify/caseRequest";
 import { compareCase, readCasePass } from "@/lib/verify/processCase";
 
 // 읽기 한 번이 오래 걸릴 수 있다. 배포 시 요금제 한도를 확인할 것.
@@ -29,11 +31,15 @@ export async function POST(request: Request) {
   if (step === "compare") {
     const fieldsRaw = form.get("fields");
     const readsRaw = form.get("reads");
-    if (typeof fieldsRaw !== "string" || typeof readsRaw !== "string") return bad("한글 서류 값과 읽은 결과가 모두 필요합니다.");
+    const groupsRaw = form.get("readGroups");
+    if (typeof fieldsRaw !== "string" || (typeof readsRaw !== "string" && typeof groupsRaw !== "string")) return bad("한글 서류 값과 읽은 결과가 모두 필요합니다.");
     const fields = parseDocumentFields(fieldsRaw);
-    const reads = parseRegistryReads(readsRaw);
-    if (!fields || !reads) return bad("요청 형식이 올바르지 않습니다.");
-    return Response.json(compareCase(folder, fields, reads));
+    const groups = typeof groupsRaw === "string" ? parseRegistryReadGroups(groupsRaw) : (() => {
+      const reads = parseRegistryReads(readsRaw as string);
+      return reads ? [reads] : null;
+    })();
+    if (!fields || !groups) return bad("요청 형식이 올바르지 않습니다.");
+    return Response.json(compareCase(folder, fields, groups));
   }
 
   if (step !== "read") return bad("처리 단계(step)가 올바르지 않습니다.");

@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // 지울 파일을 옮겨 두는 곳 (검사하지 않음)
     "trash-can/**",
+    // 시험 서류를 만들 때 생기는 파일 (커밋하지 않음)
+    "tests/fixtures-build/**",
   ]),
 ]);
 

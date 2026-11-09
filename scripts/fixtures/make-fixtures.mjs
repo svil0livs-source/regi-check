@@ -64,11 +64,20 @@ function propertyBlock(h, n) {
 function hwpParagraphs(c) {
   const h = c.hwp;
   // 부동산마다 「N. 1동의 건물의 표시」 묶음 하나 (공동담보면 두 개)
-  const property = [{ location: h.location, lotNumber: h.lotNumber, unit: h.unit, area: h.area, place: c.place }, ...h.extra].flatMap((x, n) => propertyBlock(x, n + 1));
+  // 토지·건물 (2026-11-09 실제 서류 모양): 「1. 건물」「2. 토지」 묶음
+  const property = c.building
+    ? [
+        "1. 건물", `고유번호[1111-2012-00${String(2600 + c.place.ho).slice(-4)}]`, `${h.location} ${h.lotNumber}`, c.building.name, `[도로명주소]${c.place.road}`,
+        `${c.building.structure} 슬래브지붕 ${h.floors.length}층 단독주택`, ...h.floors.map(([f, a]) => `${f} ${a}㎡`), "",
+        "2. 토지", `고유번호[1111-2001-00${String(2600 + c.place.ho).slice(-4)}]`, `${h.location} ${h.lotNumber} 대 ${c.landArea}㎡`,
+      ]
+    : [{ location: h.location, lotNumber: h.lotNumber, unit: h.unit, area: h.area, place: c.place }, ...h.extra].flatMap((x, n) => propertyBlock(x, n + 1));
 
-  const mortgageLine =
-    h.mortgages.map((m) => `${pad2(m.date)} 접수 ${m.receipt} 순위 제${m.rank}번으로 등기한 근저당권설정등기`).join(", ") +
-    ". 단, 근저당권은 채권과 함께 이전함.";
+  // 근저당권: 집합건물 건은 한 줄에 이어 적고, 토지·건물 건은 실제 서류처럼 한 건씩 줄을 나눈다
+  const mortgageText = (m) => `${pad2(m.date)} 접수 ${m.receipt} 순위 제${m.rank}번으로 등기한 근저당권설정등기`;
+  const mortgageLines = c.building
+    ? h.mortgages.map((m, i) => mortgageText(m) + (i === h.mortgages.length - 1 ? "." : ","))
+    : [h.mortgages.map(mortgageText).join(", ") + ". 단, 근저당권은 채권과 함께 이전함."];
   const amount = `(채권최고액 : 금 ${won(h.amount)}원)`;
   const assignor = [`${h.assignorName} (${h.assignorId})`, "서울특별시 중구 세종대로 12(태평로1가)", "(대표이사)홍대표"];
   const kamco = ["한국자산관리공사 (114671-0023169)", "부산광역시 남구 문현금융로 40(문현동)", "사 장 : 정 정 훈", "대 리 인 : 김 기 덕", "(취급지점: 서울동부지역본부)"];
@@ -81,8 +90,9 @@ function hwpParagraphs(c) {
     "등 기 의 목 적",
     "근저당권 이전",
     "이 전 할 근 저 당 권",
-    mortgageLine,
+    ...mortgageLines,
     amount,
+    ...(c.building ? ["단, 근저당권은 채권과 함께 이전함."] : []),
     "채권 양도인",
     ...assignor,
     "채권 양수인",
@@ -101,8 +111,9 @@ function hwpParagraphs(c) {
     ...property,
     "【이전할 근저당권 및 채무자의 표시】",
     "이전할 근저당권",
-    mortgageLine,
+    ...mortgageLines,
     amount,
+    ...(c.building ? ["단, 근저당권은 채권과 함께 이전함."] : []),
     "채 무 자",
     h.debtor,
     c.eul.find((e) => e.kind === "mortgage" && !e.struck)?.debtorAddr ?? "서울특별시 종로구 대학로 1",
@@ -195,7 +206,13 @@ function registryTables(c) {
     [{ cells: [["1"], ["1 소유권대지권"], [`${p.land}분의`, p.ratio], ["2001년4월20일 대지권", "2001년4월30일 등기"]] }],
     { center: true },
   );
-  const gap = table(
+  return [building, land, unit, landRight, gapTable(c), eulTable(c.eul)];
+}
+
+/** 갑구 (모든 등기부 같은 모양) */
+function gapTable(c) {
+  const regDate = "2001년4월30일";
+  return table(
     "【  갑      구  】  ( 소유권에 관한 사항 )",
     ["순위번호", "등 기 목 적", "접    수", "등 기 원 인", "권리자 및 기타사항"],
     [9, 18, 15, 15, 43],
@@ -205,7 +222,11 @@ function registryTables(c) {
       { cells: [["3"], ["가압류"], ["2026년7월16일", "제3855975호"], ["2026년7월14일", "가압류결정"], ["청구금액  금12,369,920원", "채권자  가상카드 주식회사"]] },
     ],
   );
-  const eulRows = c.eul.map((e) => {
+}
+
+/** 을구: 근저당권설정·말소·변경·이전 줄들 */
+function eulTable(entries) {
+  const eulRows = entries.map((e) => {
     if (e.kind === "cancel") {
       const t = e.targets;
       const purpose = t.length === 1 ? [`${t[0]}번근저당권설정등`, "기말소"] : [...t.slice(0, -1).map((x) => `${x}번근저당권설정,`), `${t[t.length - 1]}번근저당권설정`, "등기말소"];
@@ -243,8 +264,34 @@ function registryTables(c) {
       ],
     };
   });
-  const eul = table("【  을      구  】  ( 소유권 이외의 권리에 관한 사항 )", ["순위번호", "등 기 목 적", "접    수", "등 기 원 인", "권리자 및 기타사항"], [9, 17, 15, 15, 44], eulRows);
-  return [building, land, unit, landRight, gap, eul];
+  return table("【  을      구  】  ( 소유권 이외의 권리에 관한 사항 )", ["순위번호", "등 기 목 적", "접    수", "등 기 원 인", "권리자 및 기타사항"], [9, 17, 15, 15, 44], eulRows);
+}
+
+/**
+ * 일반건물·토지 등기부 (2026-11-09: 실제 인터넷등기소 글자 PDF 모양). kind: "building" | "land"
+ * 토지는 표시가 한 번 바뀌어 옛 표시 줄(말소)과 지금 표시 줄이 있다.
+ */
+function plainRegistryTables(c, kind) {
+  const p = c.place;
+  const b = c.building;
+  const title =
+    kind === "building"
+      ? table(
+          "【  표   제   부  】  ( 건물의 표시 )",
+          ["표시번호", "접    수", "소재지번,건물명칭 및 번호", "건 물 내 역", "등기원인 및 기타사항"],
+          [9, 15, 28, 25, 23],
+          [{ cells: [["1"], ["2012년5월3일"], lines(p.loc, `${p.lot} ${b.name}`, "[도로명주소]", p.road), lines(`${b.structure} 슬래브지붕`, `${b.floors.length}층 단독주택`, ...b.floors.map(([f, a]) => `${f}  ${a}㎡`)), ["도면번호 제2012-77호"]] }],
+        )
+      : table(
+          "【  표   제   부  】  ( 토지의 표시 )",
+          ["표시번호", "접    수", "소 재 지 번", "지  목", "면  적", "등기원인 및 기타사항"],
+          [9, 15, 30, 9, 13, 24],
+          [
+            { struck: true, cells: [["1"], ["2001년3월2일"], lines(p.loc, `   ${p.lot}`), ["대"], [`${c.landOldArea}㎡`], [""]] },
+            { cells: [["2"], [""], lines(p.loc, `   ${p.lot}`), ["대"], [`${c.landArea}㎡`], ["2015년1월2일", "지적정리"]] },
+          ],
+        );
+  return [title, gapTable(c), eulTable(kind === "building" ? c.eul : c.landEul)];
 }
 
 function summaryPage(c) {
@@ -303,7 +350,7 @@ window.paginate = (spec) => {
   const newPage = (first) => {
     const pg = document.createElement('div');
     pg.className = 'page' + (first ? ' cert' : '');
-    pg.innerHTML = (first ? '<h1>등기사항전부증명서(말소사항 포함)</h1><h2>- 집합건물 -</h2><div class="uid">' + spec.uid + '</div>' : '') +
+    pg.innerHTML = (first ? '<h1>등기사항전부증명서(말소사항 포함)</h1><h2>- ' + (spec.kindLabel || '집합건물') + ' -</h2><div class="uid">' + spec.uid + '</div>' : '') +
       '<div class="hdr">' + spec.header + '</div><div class="body"></div><div class="wm">열람용</div><div class="foot"><div>열람일시 : 2026년10월28일 16시50분46초</div><div class="pg"></div></div>';
     book.appendChild(pg);
     pages.push(pg);
@@ -361,8 +408,22 @@ window.paginate = (spec) => {
   return pages.length;
 };`;
 
-function registryHtml(c) {
+function registryHtml(c, kind) {
   const p = c.place;
+  if (kind) {
+    // 일반건물·토지 글자 PDF: 스캔 효과·요약 페이지 없이
+    const tables = plainRegistryTables(c, kind).map((t, i) => ({ ...t, gapBefore: i > 0 }));
+    const label = kind === "building" ? "건물" : "토지";
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${FONT_FACE}${CSS}@page { size: 794px 1123px; margin: 0; } .page { break-after: page; } body { -webkit-text-stroke: 0; } .wm { display: none; }</style><script>${PAGINATE}</script></head><body>
+<div id="book"></div>
+<script>window.SPEC = ${JSON.stringify({
+      uid: `고유번호 1111-2012-00${String(2600 + p.ho).slice(-4)}`,
+      header: esc(`[${label}] ${p.loc} ${p.lot}${kind === "building" ? " " + c.building.name : ""}`),
+      kindLabel: label,
+      tables,
+      pen: false,
+    })};</script></body></html>`;
+  }
   const tables = registryTables(c).map((t, i) => ({ ...t, gapBefore: i === 2 || i === 4 || i === 5 }));
   return `<!doctype html><html><head><meta charset="utf-8"><style>${FONT_FACE}${CSS}</style><script>${PAGINATE}</script></head><body>
 ${c.look.summary ? summaryPage(c) : ""}
@@ -457,6 +518,24 @@ for (const c of cases) {
     continue;
   }
 
+  // 토지·건물 건: 인터넷등기소 글자 PDF 두 개 (스캔 효과 없이 글자가 들어 있는 PDF, 2026-11-09)
+  if (c.building) {
+    const REG_FILES = ["등기사항전부증명서.pdf", "등기사항전부증명서_건물.pdf", "등기사항전부증명서_토지.pdf"];
+    for (const f of REG_FILES) if (existsSync(join(dir, f))) rmSync(join(dir, f));
+    const counts = [];
+    for (const kind of ["building", "land"]) {
+      const page = await ctx.newPage();
+      const htmlPath = join(buildDir, `registry-${c.folder}-${kind}.html`);
+      writeFileSync(htmlPath, registryHtml(c, kind), "utf8");
+      await page.goto(`file://${htmlPath}`, { waitUntil: "load" });
+      if (!(await page.evaluate(async () => (await document.fonts.load("16px 'RegFont'", "가나다123")).length > 0))) throw new Error("글꼴을 불러오지 못했습니다");
+      counts.push(await page.evaluate(() => window.paginate(window.SPEC)));
+      writeFileSync(join(dir, `등기사항전부증명서_${kind === "building" ? "건물" : "토지"}.pdf`), await page.pdf({ width: "794px", height: "1123px", printBackground: true }));
+      await page.close();
+    }
+    console.log(`${c.folder}: ${c.format}, 글자 PDF 건물 ${counts[0]}쪽·토지 ${counts[1]}쪽, ${c.expected}${c.errors.length ? ` (${c.errors.map((e) => e.desc).join(", ")})` : ""}`);
+    continue;
+  }
   // 부동산마다 등기부 하나. 공동담보(부동산 2개)면 두 등기부를 한 PDF로 이어 붙인다 (사용자가 실제로 합쳐서 올림, 2026-11-07)
   const jpegs = [];
   const sizes = [];

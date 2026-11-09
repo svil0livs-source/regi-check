@@ -174,3 +174,27 @@ export function parseRegistryReads(json: string): RegistryRead[] | null {
   }
   return out;
 }
+
+/** 읽기 묶음 최대 개수 (2026-11-09: 스캔본 읽기 묶음 + 글자 PDF 읽기) */
+export const MAX_READ_GROUPS = 4;
+
+/**
+ * 읽기 결과 묶음 목록(JSON 글자)을 검사해 돌려준다 (2026-11-09: 한 건에 등기부 PDF 여러 개).
+ * 묶음마다 따로 다수결한 뒤 합친다 — 스캔본은 여러 번 읽은 결과, 글자 PDF는 글자를 바로 읽은 결과 1개.
+ */
+export function parseRegistryReadGroups(json: string): RegistryRead[][] | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_READ_GROUPS) return null;
+  const out: RegistryRead[][] = [];
+  for (const g of raw) {
+    const group = parseRegistryReads(JSON.stringify(g));
+    if (!group) return null;
+    out.push(group);
+  }
+  return out;
+}

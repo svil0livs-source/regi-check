@@ -43,6 +43,8 @@ function rng(seed) {
  * opt.kamco: 이미 한국자산관리공사로 이전돼 있음(양도인은 그 전 권리자), opt.liveOthers: 이전하지 않는 다른 근저당권 수
  * opt.coDebtor: 채무자가 두 명(공동 채무자). 한글 서류에는 등기부와 반대 순서로 적는다 (2026-11-07 추가)
  * opt.twoUnits: 담보가 같은 단지의 집합건물 두 호수(공동담보). 등기부 두 개를 한 PDF로 이어 붙인다 (2026-11-07 추가, 실제로는 합쳐서 올린다고 함)
+ * opt.landBuilding: 단독주택처럼 토지·건물 등기부가 따로 있는 건. 인터넷등기소 글자 PDF 두 개(건물·토지)로 만들고,
+ *   같은 근저당권(공동담보)이 두 등기부에 나온다. 토지 등기부는 순위가 하나씩 뒤다. 한글 서류는 근저당권을 부동산마다 한 줄씩 적는다 (2026-11-09 실제 서류 모양)
  * opt.change: 이전할 근저당권에 「근저당권변경」 부기등기가 있어 채권최고액이 바뀜. 한글 서류에는 변경 뒤 금액 (2026-11-07 추가)
  */
 function baseCase(i, opt = {}) {
@@ -118,10 +120,26 @@ function baseCase(i, opt = {}) {
   }
 
   const sum = targets.reduce((n, t) => n + (t.newAmount ?? t.amount), 0);
+
+  // 토지·건물 (2026-11-09): 건물 이름·구조·층별 면적, 토지 면적, 토지 등기부의 을구(순위 하나씩 뒤)
+  const building = opt.landBuilding
+    ? { name: `${place.complex.slice(0, 2)}주택`, structure: "철근콘크리트구조", floors: [["1층", "61.36"], ["2층", "58.20"], ["3층", "58.2"], ["옥탑1층", "11.74"]] }
+    : null;
+  const shift = (r) => r.replace(/^(\d+)/, (d) => String(Number(d) + 1));
+  const landEul = opt.landBuilding
+    ? [
+        { kind: "mortgage", rank: "1", struck: true, date: "2009년2월3일", receipt: `제${5000 + Math.floor(r() * 9000)}호`, amount: 30_000_000, debtor, debtorAddr: pick(STREETS, i), holder: pick(LENDERS, i + 6), holderAddr: pick(LENDER_ADDR, 0) },
+        ...eul.map((e) => ({ ...e, rank: shift(e.rank), ...(e.parent ? { parent: shift(e.parent) } : {}), ...(e.targets ? { targets: ["1", ...e.targets.map(shift)] } : {}) })),
+      ]
+    : null;
   const [assignorName, assignorId] = assignor;
   return {
     place,
     place2,
+    building,
+    landEul,
+    landArea: opt.landBuilding ? "231.4" : null,
+    landOldArea: opt.landBuilding ? "235.0" : null,
     debtor,
     owner: debtor,
     eul,
@@ -130,11 +148,14 @@ function baseCase(i, opt = {}) {
     hwp: {
       location: place.loc,
       lotNumber: place.lot,
-      unit: `제${place.floor}층 제${place.ho}호`,
+      // 실제 양식처럼 동을 함께 적는다 (2026-11-09: 동은 등기부 머리줄의 1동 건물 동과 대조)
+      unit: `${place.dong} 제${place.floor}층 제${place.ho}호`,
       area: `${place.area}㎡`,
       // 두 번째 부동산 (공동담보)
-      extra: place2 ? [{ location: place2.loc, lotNumber: place2.lot, unit: `제${place2.floor}층 제${place2.ho}호`, area: `${place2.area}㎡`, place: place2 }] : [],
-      mortgages: targets.map((t) => ({ date: t.date, receipt: t.receipt, rank: t.rank })),
+      extra: place2 ? [{ location: place2.loc, lotNumber: place2.lot, unit: `${place2.dong} 제${place2.floor}층 제${place2.ho}호`, area: `${place2.area}㎡`, place: place2 }] : [],
+      // 토지·건물이면 근저당권마다 건물 순위·토지 순위로 두 줄 (같은 접수번호)
+      mortgages: targets.flatMap((t) => [{ date: t.date, receipt: t.receipt, rank: t.rank }, ...(opt.landBuilding ? [{ date: t.date, receipt: t.receipt, rank: shift(t.rank) }] : [])]),
+      floors: building ? building.floors.map(([f, a]) => [f, a]) : null,
       amount: sum,
       assignorName,
       assignorId,
@@ -153,7 +174,7 @@ const PLAN = [
   { opt: { liveOthers: 1 }, look: { summary: true, pen: true } },
   { opt: { kamco: true }, look: { skew: true } },
   { opt: { struckLater: true, change: true }, look: {} },
-  { opt: { liveOthers: 2 }, look: { summary: true } },
+  { opt: { liveOthers: 2, landBuilding: true }, look: {} },
   { opt: { twoUnits: true }, look: { pen: true, skew: true } },
   // 여기부터 오류 건
   { opt: {}, look: { summary: true }, err: "mortgagee" },
@@ -162,7 +183,7 @@ const PLAN = [
   { opt: { struckLater: true }, look: {}, err: "location" },
   { opt: {}, look: { skew: true }, err: "lotNumber" },
   { opt: { transfer: true, twoUnits: true }, look: { summary: true }, err: "unitNumber" },
-  { opt: {}, look: {}, err: "area" },
+  { opt: { landBuilding: true }, look: {}, err: "area" },
   { opt: { liveOthers: 1, change: true }, look: { pen: true }, err: "maxClaimAmount" },
   { opt: {}, look: { summary: true }, err: "receiptNumber" },
   { opt: { struckLater: true }, look: {}, err: "registrationDate" },
@@ -199,6 +220,11 @@ function plant(c, key) {
       h.unit = h.unit.replace(/(\d)(\d)호$/, "$2$1호") === h.unit ? h.unit.replace(/호$/, "1호") : h.unit.replace(/(\d)(\d)호$/, "$2$1호");
       return `호수 끝 두 자리 바뀜`;
     case "area":
+      // 토지·건물이면 건물 2층 면적의 소수 자리를 바꾼다
+      if (h.floors) {
+        h.floors[1][1] = h.floors[1][1].replace(/\.(\d)(\d)/, (_, a, b) => `.${b}${a === b ? (Number(a) + 1) % 10 : a}`);
+        return `건물 2층 면적 소수 자리 바뀜`;
+      }
       h.area = h.area.replace(/\.(\d)(\d)/, (_, a, b) => `.${b}${a === b ? (Number(a) + 1) % 10 : a}`);
       return `전유 면적 소수 자리 바뀜`;
     case "maxClaimAmount":
@@ -244,6 +270,7 @@ export function buildCases() {
         p.opt.coDebtor && "공동 채무자(순서 다름)",
         p.opt.change && "근저당권변경",
         p.opt.twoUnits && "부동산 2개(등기부 2개를 한 PDF로)",
+        p.opt.landBuilding && "토지·건물 글자 PDF 2개",
         p.opt.liveOthers && `다른 근저당권 ${p.opt.liveOthers}건`,
       ].filter(Boolean),
       ...c,

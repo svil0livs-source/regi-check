@@ -76,12 +76,27 @@ export function normalizeUnitNumber(raw: string): string {
 }
 
 /**
+ * 호수 앞에 붙은 동을 나눈다 (2026-11-09 사용자 결정: 한글 서류의 "제110동 제13층 제1301호"에서
+ * 동은 등기부 「1동의 건물의 표시」의 건물 이름과, 층·호는 건물번호와 대조한다).
+ * "110동13층1301호" → { dong: "110동", rest: "13층1301호" }. 동이 없으면 dong은 null.
+ */
+export function splitUnitDong(normalized: string): { dong: string | null; rest: string } {
+  const m = /^(.+동)(?=(?:지하)?\d+층|\d+호$)/u.exec(normalized);
+  return m ? { dong: m[1], rest: normalized.slice(m[1].length) } : { dong: null, rest: normalized };
+}
+
+/**
  * 면적의 표기 차이를 없앤다. 단위(㎡·m²·m2·제곱미터·평방미터)는 같은 것으로 보고,
  * 소수 끝의 0(59.820 = 59.82)도 같은 값으로 본다. 숫자+단위 모양이 아니면 정규화한 글자 그대로 비교한다.
  */
 export function normalizeArea(raw: string): string {
   const text = normalizeText(raw) // NFKC가 ㎡·m²를 "m2"로 바꾼다
     .replace(/(제곱|평방)미터|m\^?2/giu, "m2");
+  // 일반건물의 층별 면적 "1층 51.36㎡, 2층 50.10㎡" → 층마다 숫자를 같은 방식으로 정리해 잇는다 (2026-11-09)
+  const floors = [...text.matchAll(/((?:지하|지|옥탑)?\d*층)(\d+)(?:\.(\d+))?m2/gu)];
+  if (floors.length && floors.map((f) => f[0]).join("") === text) {
+    return floors.map((f) => `${f[1]}${f[2].replace(/^0+(?=\d)/u, "")}${(f[3] ?? "").replace(/0+$/u, "") ? "." + (f[3] ?? "").replace(/0+$/u, "") : ""}`).join("/");
+  }
   const m = /^(\d+)(?:\.(\d+))?(m2)?$/u.exec(text);
   if (!m) return text;
   const int = m[1].replace(/^0+(?=\d)/u, "");

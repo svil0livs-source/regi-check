@@ -67,19 +67,19 @@ describe("checkFolders", () => {
     expect(r.cases).toHaveLength(2);
     expect(r.cases.every((c) => c.ok)).toBe(true);
     const hong = r.cases.find((c) => c.hwpPath === "묶음/근저당권이전_홍길동.hwp");
-    expect(hong).toMatchObject({ folder: "묶음 / 근저당권이전_홍길동", pdfPath: "묶음/등기부_홍길동.pdf" });
-    expect(r.cases.find((c) => c.hwpPath?.endsWith("김철수.hwpx"))?.pdfPath).toBe("묶음/등기부_김철수.pdf");
+    expect(hong).toMatchObject({ folder: "묶음 / 근저당권이전_홍길동", pdfPaths: ["묶음/등기부_홍길동.pdf"] });
+    expect(r.cases.find((c) => c.hwpPath?.endsWith("김철수.hwpx"))?.pdfPaths).toEqual(["묶음/등기부_김철수.pdf"]);
   });
 
   it("구분 기호 없이 붙어 있어도, 성이 같아도 이름 전체로 짝짓는다", () => {
     const r = checkFolders([f("A/김철수신청서.hwp"), f("A/김영희신청서.hwp"), f("A/김영희등기부.pdf"), f("A/김철수등기부.pdf")]);
-    expect(r.cases.find((c) => c.hwpPath === "A/김철수신청서.hwp")?.pdfPath).toBe("A/김철수등기부.pdf");
-    expect(r.cases.find((c) => c.hwpPath === "A/김영희신청서.hwp")?.pdfPath).toBe("A/김영희등기부.pdf");
+    expect(r.cases.find((c) => c.hwpPath === "A/김철수신청서.hwp")?.pdfPaths).toEqual(["A/김철수등기부.pdf"]);
+    expect(r.cases.find((c) => c.hwpPath === "A/김영희신청서.hwp")?.pdfPaths).toEqual(["A/김영희등기부.pdf"]);
   });
 
   it("등기부 하나에 한글 파일 여러 개가 짝지어질 수 있다", () => {
     const r = checkFolders([f("A/홍길동_1번.hwp"), f("A/홍길동_2번.hwp"), f("A/홍길동_등기부.pdf"), f("A/김철수_등기부.pdf"), f("A/김철수.hwp")]);
-    expect(r.cases.filter((c) => c.pdfPath === "A/홍길동_등기부.pdf")).toHaveLength(2);
+    expect(r.cases.filter((c) => c.pdfPaths.includes("A/홍길동_등기부.pdf"))).toHaveLength(2);
     expect(r.cases.every((c) => c.ok)).toBe(true);
   });
 
@@ -93,11 +93,23 @@ describe("checkFolders", () => {
     expect(orphan).toMatchObject({ ok: false, folder: "A / 이영희.pdf", reasons: ["짝이 되는 한글 파일 없음: 이영희.pdf"] });
   });
 
+  it("이 한글 파일만 가진 이름이 든 PDF는 여러 개여도 모두 그 건의 등기부 (2026-11-09 사용자 결정: 토지·건물 등기부)", () => {
+    const r = checkFolders([f("A/홍길동.hwp"), f("A/김철수.hwp"), f("A/홍길동_건물.pdf"), f("A/홍길동_토지.pdf"), f("A/김철수.pdf")]);
+    expect(r.cases.find((c) => c.id === "A/홍길동.hwp")).toMatchObject({ ok: true, pdfPaths: ["A/홍길동_건물.pdf", "A/홍길동_토지.pdf"] });
+    expect(r.cases.find((c) => c.id === "A/김철수.hwp")).toMatchObject({ ok: true, pdfPaths: ["A/김철수.pdf"] });
+  });
+
   it("짝이 하나로 정해지지 않으면 추측하지 않는다", () => {
-    const r = checkFolders([f("A/홍길동.hwp"), f("A/김철수.hwp"), f("A/홍길동_건물.pdf"), f("A/홍길동_토지.pdf")]);
-    const hong = r.cases.find((c) => c.id === "A/홍길동.hwp");
+    const r = checkFolders([f("A/홍길동_1.hwp"), f("A/홍길동_2.hwp"), f("A/홍길동_건물.pdf"), f("A/홍길동_토지.pdf"), f("A/김철수.pdf")]);
+    const hong = r.cases.find((c) => c.id === "A/홍길동_1.hwp");
     expect(hong?.ok).toBe(false);
     expect(hong?.reasons[0]).toContain("여러 개");
+  });
+
+  it("한글 파일 1개인 폴더는 PDF가 여러 개여도 1건 (2026-11-09)", () => {
+    const r = checkFolders([f("6/양도증서.hwp"), f("6/6-1.건물.pdf"), f("6/6-2.토지.pdf")]);
+    expect(r.cases).toHaveLength(1);
+    expect(r.cases[0]).toMatchObject({ ok: true, folder: "6", pdfPaths: ["6/6-1.건물.pdf", "6/6-2.토지.pdf"] });
   });
 
   it("모든 파일 이름에 들어 있는 말(근저당권 등)로는 짝짓지 않는다", () => {
@@ -111,8 +123,8 @@ describe("checkFolders", () => {
 
   it("번호가 이름이면 번호 전체로 짝짓는다 (1과 10을 섞지 않음)", () => {
     const r = checkFolders([f("A/1.hwp"), f("A/10.hwp"), f("A/10.pdf"), f("A/1.pdf")]);
-    expect(r.cases.find((c) => c.id === "A/1.hwp")?.pdfPath).toBe("A/1.pdf");
-    expect(r.cases.find((c) => c.id === "A/10.hwp")?.pdfPath).toBe("A/10.pdf");
+    expect(r.cases.find((c) => c.id === "A/1.hwp")?.pdfPaths).toEqual(["A/1.pdf"]);
+    expect(r.cases.find((c) => c.id === "A/10.hwp")?.pdfPaths).toEqual(["A/10.pdf"]);
   });
 
   it("맥에서 고른 파일 이름(자모 분리)도 짝짓는다", () => {

@@ -167,3 +167,30 @@ describe("verifyCase: 한글 서류에 접수번호가 없을 때 (2026-11-07)",
     }
   });
 });
+
+describe("verifyCase: 토지+건물 공동담보를 한글 서류가 부동산마다 한 줄씩 적음 (2026-11-09 실제 서류)", () => {
+  const land = { location: o("경기도 성남시 분당구 서현동"), lotNumber: o("255-1"), unitNumber: o(""), area: o("210.5㎡") };
+  const bldg = { location: o("경기도 성남시 분당구 서현동"), lotNumber: o("255-1"), unitNumber: o(""), area: o("1층 51.36㎡, 2층 50.1㎡") };
+  const h = (rank2: string): DocumentFields => ({
+    ...hwp(),
+    properties: [
+      { location: v("경기도 성남시 분당구 서현동"), lotNumber: v("255-1"), unitNumber: v(""), area: v("1층 51.36㎡, 2층 50.10㎡") },
+      { location: v("경기도 성남시 분당구 서현동"), lotNumber: v("255-1"), unitNumber: v(""), area: v("210.5㎡") },
+    ],
+    mortgages: [
+      { receiptNumber: v("제14475호"), registrationDate: v("2020년03월13일"), rank: v("3") },
+      { receiptNumber: v("제14475호"), registrationDate: v("2020년03월13일"), rank: v(rank2) },
+    ],
+  });
+  // 토지 등기부(순위 2)를 먼저 올려도 된다
+  const r = (): RegistryRead => ({ properties: [land, bldg], owners: [], mortgages: [mortgage({ rank: "2" }), mortgage({ rank: "3" })] });
+
+  it("같은 근저당권은 채권최고액을 한 번만 더하고, 순위는 같은 순위의 등기부 것과 짝지어 전부 일치", () => {
+    expect(summarizeCase(verifyCase(h("2"), r()))).toBe("all_match");
+  });
+
+  it("두 번째 줄의 순위가 어느 등기부와도 다르면 순위 불일치", () => {
+    const rs = verifyCase(h("4"), r());
+    expect(rs.filter((x) => x.status !== "match").map((x) => `${x.key}#${x.index}`)).toEqual(["rank#2"]);
+  });
+});

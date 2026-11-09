@@ -130,3 +130,25 @@ describe("compareField: 읽지 못함·확신 낮음", () => {
     expect(result.group).toBe("parties");
   });
 });
+
+describe("compareField: 호수 앞의 동 (2026-11-09 사용자 결정)", () => {
+  it("동·층·호가 모두 같으면 일치 (제 있음·없음은 같음)", () => {
+    expect(compareField("unitNumber", v("제110동 제13층 제1301호"), v("110동 제13층 제1301호")).status).toBe("match");
+  });
+  it("층·호는 같고 동이 다르면 불일치", () => {
+    expect(compareField("unitNumber", v("제110동 제13층 제1301호"), v("제111동 제13층 제1301호")).status).toBe("mismatch");
+  });
+  it("층·호가 다르면 동과 관계없이 불일치", () => {
+    expect(compareField("unitNumber", v("제110동 제13층 제1301호"), v("제110동 제13층 제1310호")).status).toBe("mismatch");
+  });
+  it("등기부에서 동을 읽지 못했으면 확인 필요", () => {
+    const r = compareField("unitNumber", v("제110동 제13층 제1301호"), v("제13층 제1301호"));
+    expect(r.status).toBe("needs_review");
+  });
+  it("한글 서류에 동이 없으면 층·호만 대조", () => {
+    expect(compareField("unitNumber", v("제13층 제1301호"), v("제110동 제13층 제1301호")).status).toBe("match");
+  });
+  it("가동·나동처럼 글자로 된 동도 나눈다", () => {
+    expect(compareField("unitNumber", v("가동 제2층 제201호"), v("나동 제2층 제201호")).status).toBe("mismatch");
+  });
+});
