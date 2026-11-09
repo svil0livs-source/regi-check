@@ -52,8 +52,10 @@ function parseProperties(paras: string[]): PropertyEntry[] {
     const unitLine = block.find((l) => /건물의\s*번호\s*:/.test(l));
     const unit = unitLine?.replace(/^.*건물의\s*번호\s*:\s*/, "").replace(/\[.*$/, "").trim();
     // "구조 및 면적 : 철근콘크리트구조 80㎡" → "80㎡" (대지권 토지 면적은 쓰지 않는다)
-    const areaLine = block.find((l) => /구조\s*및\s*면적\s*:/.test(l));
-    const areaValue = areaLine ? /([\d.,]+\s*(?:㎡|m²|m2|제곱미터))\s*$/.exec(areaLine)?.[1] : undefined;
+    // 면적이 구조 다음 줄로 넘어가 있기도 하다 (2026-11-09 실제 서류: "구조 및 면적 : 철근콘크리트구조" / "114.62㎡")
+    const AREA_RE = /([\d.,]+\s*(?:㎡|m²|m2|제곱미터))\s*$/;
+    const ai = block.findIndex((l) => /구조\s*및\s*면적\s*:/.test(l));
+    const areaValue = ai === -1 ? undefined : (AREA_RE.exec(block[ai]) ?? (/^[\d.,]+\s*(?:㎡|m²|m2|제곱미터)$/.test(block[ai + 1] ?? "") ? AREA_RE.exec(block[ai + 1]) : null))?.[1];
     return {
       location: read(m?.[1]),
       lotNumber: read(m?.[2]),
@@ -82,15 +84,24 @@ export function extractHwpFields(paragraphs: string[]): DocumentFields {
   // 이전할 근저당권: 칸 이름 다음 줄, 채권최고액은 그다음 "(채권최고액 : 금 …원)" 줄
   const mi = at("이전할근저당권");
   const mortgageLine = mi === -1 ? undefined : nextFilled(paras, mi);
-  const mortgages = parseMortgages(mortgageLine);
-  const amountLine = mi === -1 ? undefined : paras.slice(mi + 1, mi + 4).find((p) => /채권최고액/.test(p));
+  // 근저당권이 여러 건이면 한 줄에 이어 적기도, 한 건씩 줄을 나눠 적기도 한다 (2026-11-09 실제 서류). 이어지는 "… 접수 제…호" 줄을 모두 읽는다
+  const mortgageLines = mortgageLine === undefined ? [] : [mortgageLine];
+  if (mortgageLine !== undefined) {
+    for (let i = paras.indexOf(mortgageLine, mi + 1) + 1; i < paras.length && /접수\s*제\s*[\d-]+\s*호/.test(paras[i]); i++) mortgageLines.push(paras[i]);
+  }
+  const mortgages = parseMortgages(mortgageLines.length ? mortgageLines.join(" ") : undefined);
+  const amountLine = mi === -1 ? undefined : paras.slice(mi + 1, mi + 3 + mortgageLines.length).find((p) => /채권최고액/.test(p));
   const amount = amountLine ? /채권최고액\s*:?\s*(금\s*[\d,]+\s*원)/.exec(amountLine)?.[1] : undefined;
 
   // 채권 양도인: 칸 이름 다음 줄 "회사명 (110111-0005078)". 번호는 앞 6자리만 남기고 뒷자리는 여기서 버린다.
   const ai = at("채권양도인");
   const assignorLine = ai === -1 ? undefined : nextFilled(paras, ai);
   const assignorName = assignorLine?.replace(/\(.*$/, "").trim();
-  const idFront = assignorLine ? /\(\s*(\d{6})\s*-\s*[\d*]{7}\s*\)/.exec(assignorLine)?.[1] : undefined;
+  // 번호는 이름 뒤 괄호 안에 있거나, 괄호 없이 다음 줄에 따로 있다 (2026-11-09 실제 서류)
+  const nextLine = ai === -1 || assignorLine === undefined ? undefined : paras.slice(paras.indexOf(assignorLine, ai + 1) + 1).find(Boolean);
+  const idFront = assignorLine
+    ? (/\(\s*(\d{6})\s*-\s*[\d*]{7}\s*\)/.exec(assignorLine) ?? /^\(?\s*(\d{6})\s*-\s*[\d*]{7}\s*\)?$/.exec(nextLine ?? ""))?.[1]
+    : undefined;
 
   // 채무자: 칸 이름 다음 줄 (주소 줄은 읽지 않는다)
   const di = at("채무자");

@@ -67,6 +67,32 @@ describe("extractHwpFields (양도증서)", () => {
   });
 });
 
+describe("extractHwpFields: 실제 서류에서 본 다른 줄 모양 (2026-11-09)", () => {
+  it("면적이 「구조 및 면적」 다음 줄에 따로 있어도 읽는다", () => {
+    const paras = sample(ONE).map((p) => (/구조 및 면적/.test(p) ? "      구조 및 면적 : 철근콘크리트구조" : p));
+    paras.splice(paras.findIndex((p) => /구조 및 면적/.test(p)) + 1, 0, "      80.15㎡");
+    expect(extractHwpFields(paras).properties[0].area.value).toBe("80.15㎡");
+  });
+
+  it("이전할 근저당권이 한 건씩 줄을 나눠 적혀 있어도 모두 읽는다", () => {
+    const paras = sample(ONE).flatMap((p) =>
+      p === ONE
+        ? ["   2020년03월13일 접수 제14475호 순위 제3번으로 등기한 근저당권설정등기,", "   2022년01월19일 접수 제2943호 순위 제4번으로 등기한 근저당권설정등기."]
+        : [p],
+    );
+    const f = extractHwpFields(paras);
+    expect(f.mortgages.map((m) => m.receiptNumber.value)).toEqual(["제14475호", "제2943호"]);
+    expect(f.maxClaimAmount.value).toBe("금 504,000,000원");
+  });
+
+  it("양도인 등록번호가 괄호 없이 다음 줄에 있어도 앞 6자리를 읽는다", () => {
+    const paras = sample(ONE).flatMap((p) => (/가나다보험주식회사/.test(p) ? ["          가나다보험주식회사", "          110111-1234567"] : [p]));
+    const f = extractHwpFields(paras);
+    expect(f.parties.mortgagee[0].value).toBe("가나다보험주식회사");
+    expect(f.mortgageeIdFront.value).toBe("110111");
+  });
+});
+
 describe("readHwpParagraphs", () => {
   it("한글 파일이 아니면 오류", () => {
     expect(() => readHwpParagraphs(Buffer.from("not a hwp"))).toThrow(HwpReadError);
