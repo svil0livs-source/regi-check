@@ -15,6 +15,9 @@ import { summarizeCase } from "@/lib/compare/summarize";
 import { extractHwpFields } from "@/lib/readers/hwpFields";
 import { readHangulParagraphs } from "@/lib/readers/hangulFile";
 import { selectPageImages, type PageImageObject } from "@/lib/readers/pdfPages";
+import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+import { linesFromPages, readTextPieces, type PdfJsLike } from "@/lib/readers/pdfText";
+import { parseRegistryLines } from "@/lib/readers/registryParse";
 import { combineReads, readRegistryPass, type PassCarry } from "@/lib/readers/registryRead";
 import type { RegistryRead } from "@/lib/readers/registryOcr";
 import { grayJpegDict } from "@/lib/upload/fitImages";
@@ -92,8 +95,20 @@ describe.skipIf(!run)("실제 글자 읽기로 시험용 서류 대조", () => {
           let got = "처리 실패";
           const problems: string[] = [];
           try {
-            const pdf = readFileSync(join(dir, "등기사항전부증명서.pdf"));
-            const reg = await readLikeApp(await pageImages(pdf));
+            // 배포본처럼: 등기부 PDF가 여러 개면 모두 읽고(2026-11-09), 스캔 사진이 없는 글자 PDF는 글자를 바로 읽어 해석한다
+            const groups: RegistryRead[] = [];
+            const images: PageImageObject[] = [];
+            const textLines = [];
+            for (const f of readdirSync(dir).filter((x) => /\.pdf$/i.test(x)).sort()) {
+              const pdf = readFileSync(join(dir, f));
+              const found = await pageImages(pdf);
+              const offset = images.length ? Math.max(...images.map((o) => o.page)) + 1 : 0;
+              if (found.length) images.push(...found.map((o) => ({ ...o, page: o.page + offset })));
+              else textLines.push(...linesFromPages(await readTextPieces(pdfjs as unknown as PdfJsLike, new Uint8Array(pdf))));
+            }
+            if (images.length) groups.push(await readLikeApp(images));
+            if (textLines.length) groups.push(parseRegistryLines(textLines));
+            const reg: RegistryRead = { properties: groups.flatMap((g) => g.properties), owners: groups.flatMap((g) => g.owners), mortgages: groups.flatMap((g) => g.mortgages) };
             const results = verifyCase(hwp, reg);
             const s = summarizeCase(results);
             got = { all_match: "전부 일치", mismatch_found: "불일치 있음", needs_review: "확인 필요" }[s as "all_match"] ?? s;

@@ -26,7 +26,17 @@ const WORD_GAP = 0.15;
 
 /** 한 페이지의 글자 조각들 → 줄들 (위에서 아래로) */
 export function linesFromPieces(pieces: TextPiece[]): ParseLine[] {
-  const items = pieces.filter((p) => p.str.trim() !== "").sort((a, b) => b.y - a.y || a.x - b.x);
+  // 굵게 보이려고 같은 글자를 같은 자리에 두 번 그린 PDF가 있다 (채우기 + 테두리). 같은 자리의 같은 조각은 한 번만 쓴다
+  const seen = new Set<string>();
+  const items = pieces
+    .filter((p) => p.str.trim() !== "")
+    .filter((p) => {
+      const key = `${p.str}|${Math.round(p.x)}|${Math.round(p.y)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => b.y - a.y || a.x - b.x);
   const rows: TextPiece[][] = [];
   for (const p of items) {
     const row = rows[rows.length - 1];

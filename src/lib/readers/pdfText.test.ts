@@ -16,6 +16,12 @@ describe("linesFromPieces", () => {
   });
 });
 
+describe("linesFromPieces: 같은 자리에 두 번 그린 글자", () => {
+  it("한 번만 쓴다", () => {
+    expect(linesFromPieces([P("근저당권설정", 60, 700), P("근저당권설정", 60.2, 700.1), P("1", 20, 700)]).map((l) => l.text)).toEqual(["1  근저당권설정"]);
+  });
+});
+
 describe("linesFromPages", () => {
   it("「주요 등기사항 요약」 페이지는 뺀다", () => {
     const lines = linesFromPages([[P("【 을 구 】", 0, 100)], [P("주요 등기사항 요약 (참고용)", 0, 800), P("2  근저당권설정", 0, 700)]]);
