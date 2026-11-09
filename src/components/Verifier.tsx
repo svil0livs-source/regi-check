@@ -137,7 +137,7 @@ type PassResponse =
  */
 async function runCase(
   folder: string,
-  prepared: { fields: string; images: PageImageObject[] },
+  prepared: { fields: string; images: PageImageObject[]; textRead?: unknown },
   signal: AbortSignal,
   onProgress: (p: ProgressStep) => void,
 ): Promise<CaseOutcome> {
@@ -146,7 +146,8 @@ async function runCase(
   const pages = new Set(images.map((o) => o.page)).size;
   /** images[0..start) 안의 쪽 수 (한 쪽의 사진들은 늘 같은 조각에 들어간다) */
   const pagesBefore = (start: number) => new Set(images.slice(0, start).map((o) => o.page)).size;
-  let total = 1;
+  // 스캔 사진이 없으면(글자 PDF만) 서버에서 글자를 읽을 것이 없다 (2026-11-09)
+  let total = images.length ? 1 : 0;
   for (let pass = 0; pass < total; pass++) {
     const passes = pass === 0 ? READ_PASSES_HINT : total;
     let start = 0;
@@ -179,7 +180,9 @@ async function runCase(
   body.set("step", "compare");
   body.set("folder", folder);
   body.set("fields", prepared.fields);
-  body.set("reads", JSON.stringify(reads));
+  // 묶음마다 다수결: 스캔본을 여러 번 읽은 결과 / 글자 PDF를 브라우저가 바로 읽은 결과 (2026-11-09)
+  const groups = [...(reads.length ? [reads] : []), ...(prepared.textRead ? [[prepared.textRead]] : [])];
+  body.set("readGroups", JSON.stringify(groups));
   return post<CaseOutcome>(folder, body, signal);
 }
 /** 첫 응답 전 진행 표시에 쓸 읽기 횟수 (Tesseract 기본 5번) */
@@ -192,8 +195,9 @@ class PrepareFailed extends Error {
   }
 }
 
-const signatureOf = (hwp?: File, pdf?: File) =>
-  hwp && pdf ? `${hwp.size}:${hwp.lastModified}|${pdf.size}:${pdf.lastModified}` : "";
+/** 이어서 처리할 때 같은 파일인지 알아보는 값 (등기부 PDF가 여러 개면 모두, 2026-11-09) */
+const signatureOf = (hwp: File | undefined, pdfs: (File | undefined)[]) =>
+  hwp && pdfs.length && pdfs.every(Boolean) ? [`${hwp.size}:${hwp.lastModified}`, ...pdfs.map((p) => `${p!.size}:${p!.lastModified}`)].join("|") : "";
 
 const NAV_LINKS: NavLink[] = [
   { id: "history", label: "이전 결과" },
@@ -259,7 +263,7 @@ export default function Verifier() {
       result.cases.map((check): Row => {
         if (!check.ok) return { check, state: "done", outcome: { folder: check.folder, summary: "file_problem", results: [], error: check.reasons.join(", ") } };
         const prev = saved.get(check.folder);
-        if (prev && prev.signature === signatureOf(map.get(check.hwpPath!), map.get(check.pdfPath!))) {
+        if (prev && prev.signature === signatureOf(map.get(check.hwpPath!), check.pdfPaths.map((p) => map.get(p)))) {
           return { check, state: "done", outcome: prev.outcome, resumed: true };
         }
         return { check, state: "waiting" };
@@ -273,7 +277,7 @@ export default function Verifier() {
     abortRef.current = ac;
     // 한 건 처리. 멈추기로 중단되면 false (그 건은 다시 「대기」)
     const processOne = async (row: Row): Promise<boolean> => {
-      const { folder, hwpPath, pdfPath } = row.check;
+      const { folder, hwpPath, pdfPaths } = row.check;
       const startedAt = Date.now();
       const setProgress = (p: ProgressStep) =>
         setRows((rs) => rs.map((r) => (r.check.id === row.check.id ? { ...r, progress: { ...p, startedAt } } : r)));
@@ -283,7 +287,7 @@ export default function Verifier() {
       let outcome: CaseOutcome;
       try {
         // 원본 파일 대신 한글 서류 값과 등기부 사진만 보낸다 (요청 한도 때문에, 2026-11-06)
-        const prepared = await prepareCase(files.get(hwpPath!)!, files.get(pdfPath!)!);
+        const prepared = await prepareCase(files.get(hwpPath!)!, pdfPaths.map((p) => files.get(p)!));
         if (!prepared.ok) throw new PrepareFailed({ folder, summary: prepared.summary, results: [], error: prepared.error });
         outcome = await runCase(folder, prepared, ac.signal, setProgress);
       } catch (err) {
@@ -304,7 +308,7 @@ export default function Verifier() {
 
       // 끝난 건은 바로 보관 (창이 닫혀도 이어서 처리할 수 있게). 처리 실패는 다시 시도할 수 있게 보관하지 않는다.
       if (outcome.summary !== "processing_failed") {
-        const item = { signature: signatureOf(files.get(hwpPath!), files.get(pdfPath!)), outcome, savedAt: Date.now() };
+        const item = { signature: signatureOf(files.get(hwpPath!), pdfPaths.map((p) => files.get(p))), outcome, savedAt: Date.now() };
         if (!(await save(folder, item))) setStorageWarning(true);
         setStored((m) => new Map(m).set(folder, item));
       }

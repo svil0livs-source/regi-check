@@ -92,6 +92,11 @@ export function splitUnitDong(normalized: string): { dong: string | null; rest: 
 export function normalizeArea(raw: string): string {
   const text = normalizeText(raw) // NFKC가 ㎡·m²를 "m2"로 바꾼다
     .replace(/(제곱|평방)미터|m\^?2/giu, "m2");
+  // 일반건물의 층별 면적 "1층 51.36㎡, 2층 50.10㎡" → 층마다 숫자를 같은 방식으로 정리해 잇는다 (2026-11-09)
+  const floors = [...text.matchAll(/((?:지하|지|옥탑)?\d*층)(\d+)(?:\.(\d+))?m2/gu)];
+  if (floors.length && floors.map((f) => f[0]).join("") === text) {
+    return floors.map((f) => `${f[1]}${f[2].replace(/^0+(?=\d)/u, "")}${(f[3] ?? "").replace(/0+$/u, "") ? "." + (f[3] ?? "").replace(/0+$/u, "") : ""}`).join("/");
+  }
   const m = /^(\d+)(?:\.(\d+))?(m2)?$/u.exec(text);
   if (!m) return text;
   const int = m[1].replace(/^0+(?=\d)/u, "");

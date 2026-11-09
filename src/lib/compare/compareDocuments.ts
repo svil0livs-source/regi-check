@@ -139,12 +139,24 @@ export function compareParties(
 
 // ── 부동산 ─────────────────────────────────────────────────────────
 
-/** 짝 기준: 소재지+지번+건물 호수. 하나라도 쓸 수 없으면 null (1단계 짝짓기에서 뺀다). */
+/**
+ * 부동산 종류: 호수가 있으면 집합건물, 호수가 없고 면적이 층별이면 일반건물, 아니면 토지 (2026-11-09).
+ * 토지와 그 위 건물은 소재지·지번이 같아 종류로 가른다. 면적을 읽지 못했으면 정할 수 없다(null).
+ */
+function propertyKind(p: PropertyEntry): string | null {
+  if (p.unitNumber.value === null) return null;
+  if (p.unitNumber.value.trim() !== "") return "unit";
+  if (p.area.value === null) return null;
+  return /층/.test(p.area.value) ? "building" : "land";
+}
+
+/** 짝 기준: 소재지+지번+건물 호수+종류. 하나라도 쓸 수 없으면 null (1단계 짝짓기에서 뺀다). */
 function propertyKey(p: PropertyEntry): string | null {
   const parts = (["location", "lotNumber", "unitNumber"] as const).map((k) =>
     usableComparable(FIELD_DEFINITIONS[k].kind, p[k]),
   );
-  return parts.every((x) => x !== null) ? parts.join("\u0000") : null;
+  const kind = propertyKind(p);
+  return parts.every((x) => x !== null) && kind !== null ? [...parts, kind].join("\u0000") : null;
 }
 
 /** 짝지은 부동산 두 개의 4개 칸을 각각 비교한다. */

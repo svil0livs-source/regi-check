@@ -93,6 +93,30 @@ describe("extractHwpFields: 실제 서류에서 본 다른 줄 모양 (2026-11-0
   });
 });
 
+describe("extractHwpFields: 일반건물·토지 (2026-11-09 실제 서류 모양, 값은 가짜)", () => {
+  it("「1. 건물」은 소재지·지번·층별 면적, 「2. 토지」는 소재지·지번·면적, 호수는 빈 값", () => {
+    const paras = sample(ONE).flatMap((p, i, all) => {
+      if (/1동의 건물의 표시/.test(p) && all.indexOf(p) === i) {
+        return [
+          "1. 건물", "고유번호[1111-2020-000001]", "서울특별시 가상구 나라동 123-4", "시험빌라1동", "[도로명주소]서울특별시 가상구 나라로1길 2",
+          "철근콘크리트구조 슬래브지붕 2층 단독주택", "1층 51.36㎡", "2층 50.10㎡", "",
+          "2. 토지", "고유번호[1111-2020-000002]", "서울특별시 가상구 나라동 123-4 대 210.5㎡",
+        ];
+      }
+      return [p];
+    });
+    // 집합건물 묶음의 나머지 줄은 지운다
+    const start = paras.indexOf("2. 토지") + 3;
+    const end = paras.findIndex((p) => /등기원인과/.test(p));
+    paras.splice(start, end - start);
+    const f = extractHwpFields(paras);
+    expect(f.properties.map((p) => [p.location.value, p.lotNumber.value, p.unitNumber.value, p.area.value])).toEqual([
+      ["서울특별시 가상구 나라동", "123-4", "", "1층 51.36㎡, 2층 50.10㎡"],
+      ["서울특별시 가상구 나라동", "123-4", "", "210.5㎡"],
+    ]);
+  });
+});
+
 describe("readHwpParagraphs", () => {
   it("한글 파일이 아니면 오류", () => {
     expect(() => readHwpParagraphs(Buffer.from("not a hwp"))).toThrow(HwpReadError);

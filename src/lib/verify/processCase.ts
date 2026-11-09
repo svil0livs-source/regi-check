@@ -80,7 +80,13 @@ export async function readCasePass(folder: string, images: PageImageObject[], at
 }
 
 /** 모은 읽기 결과를 다수결로 합쳐 한글 서류 값과 대조한다 */
-export function compareCase(folder: string, hwp: DocumentFields, reads: RegistryRead[]): CaseOutcome {
-  const results = verifyCase(hwp, combineReads(reads));
+/**
+ * 대조: 읽기 묶음마다 다수결한 뒤 합친다 (2026-11-09: 스캔본 + 글자 PDF가 한 건에 함께 있을 수 있음).
+ * 부동산·소유자·근저당권을 이어 붙이고, 같은 근저당권이 여러 등기부에 나오면 대조에서 한 건으로 본다 (verifyCase.ts).
+ */
+export function compareCase(folder: string, hwp: DocumentFields, groups: RegistryRead[][]): CaseOutcome {
+  const voted = groups.map((g) => combineReads(g));
+  const merged: RegistryRead = { properties: voted.flatMap((r) => r.properties), owners: voted.flatMap((r) => r.owners), mortgages: voted.flatMap((r) => r.mortgages) };
+  const results = verifyCase(hwp, merged);
   return { folder, summary: summarizeCase(results), results };
 }

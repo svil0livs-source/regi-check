@@ -120,3 +120,11 @@ describe("표기만 다른 지번·면적·호수", () => {
     expect(normalizeUnitNumber("제2층 제202호")).not.toBe(normalizeUnitNumber("2층 201호"));
   });
 });
+
+describe("normalizeArea: 일반건물 층별 면적 (2026-11-09)", () => {
+  it("층마다 숫자를 정리해 비교한다 (끝 0·단위 표기 무시)", () => {
+    expect(normalizeArea("1층 51.36㎡, 2층 50.10㎡")).toBe(normalizeArea("1층 51.36m2, 2층 50.1㎡"));
+    expect(normalizeArea("1층 51.36㎡, 2층 50.1㎡")).not.toBe(normalizeArea("1층 51.36㎡, 2층 50.2㎡"));
+    expect(normalizeArea("1층 51.36㎡")).not.toBe(normalizeArea("1층 51.36㎡, 2층 50.1㎡"));
+  });
+});

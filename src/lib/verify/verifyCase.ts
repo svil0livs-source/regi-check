@@ -41,6 +41,7 @@ const receiptOf = (v: ExtractedValue) => (v.value ? normalizeReceiptNumber(v.val
 function selectMortgages(reg: RegistryRead, hwp: DocumentFields) {
   const forced: Forced[] = [];
   const all = reg.mortgages;
+  const used = new Set<RegistryMortgage>();
   const picked: (RegistryMortgage | undefined)[] = hwp.mortgages.map((m, i) => {
     const index = i + 1;
     const needAll = (reason: string) => {
@@ -62,7 +63,14 @@ function selectMortgages(reg: RegistryRead, hwp: DocumentFields) {
     if (hits.length === 1) return hits[0];
     // 건물·토지 등기부가 한 PDF에 함께 있으면 같은 공동담보 근저당권이 여러 번 나온다: 접수일까지 같으면 같은 건으로 본다
     const sameDay = (r: RegistryMortgage) => r.registrationDate.text?.replace(/\s+/g, "");
-    if (hits.length > 1 && hits.every((h) => !h.registrationDate.uncertain && sameDay(h) && sameDay(h) === sameDay(hits[0]))) return hits[0];
+    // 한글 서류도 같은 공동담보 근저당권을 부동산마다 한 줄씩(순위는 그 등기부의 순위) 적는다 (2026-11-09 실제 서류):
+    // 아직 짝짓지 않은 것 중 순위가 같은 것 → 아직 짝짓지 않은 것 → 첫 건 순서로 고른다
+    if (hits.length > 1 && hits.every((h) => !h.registrationDate.uncertain && sameDay(h) && sameDay(h) === sameDay(hits[0]))) {
+      const want = (m.rank.value ?? "").replace(/\D/g, "");
+      const hit = hits.find((h) => !used.has(h) && h.rank === want) ?? hits.find((h) => !used.has(h)) ?? hits[0];
+      used.add(hit);
+      return hit;
+    }
     if (hits.length > 1) {
       needAll("같은 접수번호의 근저당권이 여러 건이라 어느 것과 비교할지 확신할 수 없음");
       return undefined;
@@ -89,8 +97,13 @@ function currentHolder(m: RegistryMortgage): { name: OcrValue; idFront: OcrValue
   return notAssignee[notAssignee.length - 1] ?? chain[0];
 }
 
-/** 채권최고액 합계 (하나라도 읽지 못하면 null, 확신 낮으면 확신 낮음) */
-function sumAmounts(list: RegistryMortgage[]): ExtractedValue {
+/**
+ * 채권최고액 합계 (하나라도 읽지 못하면 null, 확신 낮으면 확신 낮음).
+ * 같은 공동담보 근저당권(접수번호·접수일이 같음)이 부동산마다 나와도 한 번만 더한다 (2026-11-09 실제 서류)
+ */
+function sumAmounts(all: RegistryMortgage[]): ExtractedValue {
+  const keyOf = (m: RegistryMortgage) => `${normalizeReceiptNumber(m.receiptNumber.text ?? "")}|${(m.registrationDate.text ?? "").replace(/\s+/g, "")}`;
+  const list = all.filter((m, i) => !m.receiptNumber.text || all.findIndex((x) => keyOf(x) === keyOf(m)) === i);
   let total = BigInt(0);
   let low = false;
   for (const m of list) {
@@ -178,9 +191,10 @@ export function verifyCase(hwp: DocumentFields, reg: RegistryRead): FieldResult[
     // 일부만 찾았으면 합계를 맞출 수 없다
     forced.push({ key: "maxClaimAmount", status: "needs_review", reason: "이전할 근저당권 일부를 등기부등본에서 찾지 못해 합계를 대조할 수 없음" });
   }
-  // 등기부에서 집합건물 표제부를 찾지 못하면 "등기부등본에 없음"(불일치)으로 단정하지 않는다 (CHECK 9번)
+  // 등기부에서 표제부를 찾지 못하면 "등기부등본에 없음"(불일치)으로 단정하지 않는다 (CHECK 9번).
+  // 2026-11-09부터 토지·일반건물 표제부도 자동 대조한다
   if (reg.properties.length === 0) {
-    for (const key of PROPERTY_KEYS) forced.push({ key, status: "needs_review", reason: "등기부등본에서 집합건물 표제부를 찾지 못했습니다. 토지·일반건물 등기부는 부동산 표시를 자동으로 대조하지 않으니 직접 확인해 주세요." });
+    for (const key of PROPERTY_KEYS) forced.push({ key, status: "needs_review", reason: "등기부등본에서 표제부(부동산 표시)를 찾지 못했습니다. 직접 확인해 주세요." });
   }
   const results = explainUnpicked(compareDocuments(hwp, registryToFields(reg, picked)), picked);
   const active = forced.filter((f) => !hwpUnreadable(hwp, f));

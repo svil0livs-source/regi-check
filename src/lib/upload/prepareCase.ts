@@ -4,16 +4,24 @@
 //   2) 등기부 PDF: 페이지 사진만 꺼내 그대로 보낸다. 파일 크기 한도는 없고(2026-11-06 사용자 결정),
 //      한 요청에 다 안 들어가면 몇 쪽씩 나눠 보낸다(readRequests.ts). 페이지 하나가 한 요청보다 클 때만
 //      그 페이지를 회색조 JPEG로 다시 저장해 줄인다 (fitImages.ts)
+//   3) 글자 PDF(인터넷등기소에서 받은 등기부, 스캔 사진이 없음): 여기서 글자를 바로 읽어 대조 항목 값만 보낸다 (2026-11-09 사용자 결정)
+//   한 건에 등기부 PDF가 여러 개일 수 있다 (2026-11-09: 토지·건물 등기부). 스캔 사진은 쪽 번호를 이어 붙여 한 번에 읽고,
+//   글자 PDF들은 줄을 이어 붙여 한 번에 해석한다. 등기부마다 나누는 것은 registryParse.ts가 한다.
 // 읽은 글자는 이 함수 안에서만 쓰고 버린다. 로그에 남기지 않는다.
 import { isHangulFile, readHangulParagraphs } from "@/lib/readers/hangulFile";
 import { extractHwpFields, isBlankForm } from "@/lib/readers/hwpFields";
 import { HwpReadError } from "@/lib/readers/hwpText";
 import { selectPageImages, type PageImageObject } from "@/lib/readers/pdfPages";
+import { linesFromPages, looksLikeTextRegistry, type TextPiece } from "@/lib/readers/pdfText";
+import type { RegistryRead } from "@/lib/readers/registryOcr";
+import { parseRegistryLines, type ParseLine } from "@/lib/readers/registryParse";
+import { browserTextPieces } from "./pdfTextLayer";
 import { fitImages, grayJpegDict, type Reencode } from "./fitImages";
 import { groupByPage, imageCost, PAGE_ROOM } from "./readRequests";
 
 export type PreparedCase =
-  | { ok: true; fields: string; images: PageImageObject[]; reencoded: boolean }
+  /** images: 스캔본 페이지 사진(서버에서 글자 읽기, 없을 수 있음), textRead: 글자 PDF를 바로 읽은 결과(없을 수 있음) */
+  | { ok: true; fields: string; images: PageImageObject[]; textRead?: RegistryRead; reencoded: boolean }
   | { ok: false; summary: "file_problem" | "processing_failed"; error: string };
 
 /** 빈 양식 안내 (2026-11-07) */
@@ -50,7 +58,17 @@ export const canvasReencode: Reencode = async (o, quality) => {
 
 const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(1);
 
-export async function prepareCase(hwpFile: Blob, pdfFile: Blob, reencode: Reencode = canvasReencode): Promise<PreparedCase> {
+/** 글자 PDF의 글자 조각 꺼내기 (브라우저는 pdf.js, 시험은 대신 넘긴다) */
+export type ReadText = (pdf: Uint8Array) => Promise<TextPiece[][]>;
+
+export async function prepareCase(
+  hwpFile: Blob,
+  pdfFiles: Blob | Blob[],
+  reencode: Reencode = canvasReencode,
+  readText: ReadText = browserTextPieces,
+): Promise<PreparedCase> {
+  const pdfList = Array.isArray(pdfFiles) ? pdfFiles : [pdfFiles];
+  const many = pdfList.length > 1;
   const fail = (error: string): PreparedCase => ({ ok: false, summary: "processing_failed", error });
 
   // 1) 한글 파일 → 대조 항목 값
@@ -66,16 +84,38 @@ export async function prepareCase(hwpFile: Blob, pdfFile: Blob, reencode: Reenco
     return fail(err instanceof HwpReadError ? err.message : "한글 파일을 읽지 못했습니다. 한글에서 다시 저장해 올려 주세요.");
   }
 
-  // 2) 등기부 PDF → 페이지 사진
-  const pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
-  if (!isPdf(pdfBytes)) return fail("등기부등본 파일이 PDF 형식이 아닙니다.");
-  let images: PageImageObject[];
-  try {
-    images = selectPageImages(pdfBytes);
-  } catch {
-    return fail("등기부등본 PDF가 손상되어 읽을 수 없습니다.");
+  // 2) 등기부 PDF마다: 스캔 사진이 있으면 사진, 없으면 글자 PDF로 보고 글자를 바로 읽는다
+  const images: PageImageObject[] = [];
+  const textLines: ParseLine[] = [];
+  for (const [n, pdfFile] of pdfList.entries()) {
+    const which = many ? `등기부등본 ${n + 1}번째 PDF` : "등기부등본";
+    const pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
+    if (!isPdf(pdfBytes)) return fail(`${which} 파일이 PDF 형식이 아닙니다.`);
+    let found: PageImageObject[];
+    try {
+      found = selectPageImages(pdfBytes);
+    } catch {
+      return fail(`${which} PDF가 손상되어 읽을 수 없습니다.`);
+    }
+    if (found.length > 0) {
+      // 앞 PDF 다음 쪽부터 이어서 번호를 붙인다 (쪽 번호로 나눠 보내고 이어 읽으므로)
+      const offset = images.length ? Math.max(...images.map((o) => o.page)) + 1 : 0;
+      images.push(...found.map((o) => ({ ...o, page: o.page + offset })));
+      continue;
+    }
+    let lines: ParseLine[];
+    try {
+      lines = linesFromPages(await readText(pdfBytes));
+    } catch {
+      return fail(`${which} PDF를 열지 못했습니다. 손상되었거나 암호가 걸려 있을 수 있습니다.`);
+    }
+    if (!looksLikeTextRegistry(lines)) return fail(`${which} PDF에 스캔 사진도 등기부 글자도 없어 읽을 수 없습니다. 스캐너로 만든 PDF나 인터넷등기소에서 받은 PDF를 넣어 주세요.`);
+    textLines.push(...lines);
   }
-  if (images.length === 0) return fail("스캔 사진이 들어 있는 PDF가 아니어서 읽을 수 없습니다. 스캐너로 만든 PDF를 넣어 주세요.");
+  // 글자 PDF는 여기서 해석해 대조 항목 값만 남긴다 (읽은 글자는 버린다). 글자를 그대로 읽었으므로 확신도는 100
+  const textRead = textLines.length ? parseRegistryLines(textLines) : undefined;
+  textLines.length = 0;
+  if (images.length === 0) return { ok: true, fields: fieldsJson, images: [], textRead, reencoded: false };
 
   // 페이지마다 한 요청에 들어가는지 본다. 넘는 페이지만 줄인다 (사진 크기(픽셀)는 그대로)
   const out: PageImageObject[] = [];
@@ -93,5 +133,5 @@ export async function prepareCase(hwpFile: Blob, pdfFile: Blob, reencode: Reenco
     out.push(...fit.images);
     reencoded ||= fit.reencoded;
   }
-  return { ok: true, fields: fieldsJson, images: out, reencoded };
+  return { ok: true, fields: fieldsJson, images: out, textRead, reencoded };
 }

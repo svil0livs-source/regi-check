@@ -47,7 +47,10 @@ export function valueConfidence(line: ParseLine, value: string): number {
   return Math.min(...chars.slice(at, at + target.length));
 }
 
-type Section = "none" | "building" | "land" | "unit" | "landRight" | "gap" | "eul";
+// plainBuilding·plainLand: 일반건물·토지 등기부의 표제부 ( 건물의 표시 ) · ( 토지의 표시 ) (2026-11-09 사용자 결정으로 자동 대조)
+type Section = "none" | "building" | "land" | "unit" | "landRight" | "plainBuilding" | "plainLand" | "gap" | "eul";
+/** 등기부 하나의 맨 앞 표제부 */
+const TITLE_SECTIONS: Section[] = ["building", "plainBuilding", "plainLand"];
 
 function sectionOf(line: ParseLine): Section | null {
   const t = letters(line.text);
@@ -55,6 +58,9 @@ function sectionOf(line: ParseLine): Section | null {
   if (fuzzyIncludes(t, "대지권의목적인토지")) return "land";
   if (fuzzyIncludes(t, "전유부분의건물의표시")) return "unit";
   if (fuzzyIncludes(t, "대지권의표시")) return "landRight";
+  // 짧은 제목이라 오독 허용 없이 찾는다 (1동의·전유부분의 건물의 표시는 위에서 이미 걸러짐)
+  if (t.includes("건물의표시") && t.length <= 14) return "plainBuilding";
+  if (t.includes("토지의표시") && t.length <= 14) return "plainLand";
   if (fuzzyIncludes(t, "소유권이외의권리")) return "eul";
   if (fuzzyIncludes(t, "소유권에관한사항")) return "gap";
   // 갑구·을구 표의 머리줄. 구 제목을 잘못 읽어도 표제부에서 벗어났음을 안다 (표제부 표는 「표시번호」로 시작)
@@ -257,7 +263,9 @@ function parseTransferBlock(block: ParseLine[], confMin: number): RegistryTransf
 function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[] {
   const has = (l: ParseLine, word: string) => fuzzyIncludes(letters(l.text), word);
   // '말소'는 짧은 낱말이라 오독 허용 없이 그대로 찾는다 (예: '주소'를 말소로 잘못 보지 않게)
-  const isCancel = (l: ParseLine) => letters(l.text).includes("말소") && has(l, "근저당권");
+  // "N번근저당권설정등기말소"는 칸이 좁아 "말소"가 다음 줄로 넘어가기도 한다 (2026-11-09 실제 글자 PDF).
+  // 다른 등기를 "N번"으로 가리키는 "N번근저당권설정…"은 그 설정등기를 지우는 말소 줄이다 (변경·이전은 "N번근저당권변경/이전")
+  const isCancel = (l: ParseLine) => (letters(l.text).includes("말소") && has(l, "근저당권")) || /\d+\s*번\s*근\s*저\s*당\s*권\s*설\s*정/.test(l.text);
   const isChange = (l: ParseLine) => !isCancel(l) && has(l, "근저당권변경");
   const isTransfer = (l: ParseLine) => !isCancel(l) && has(l, "근저당권이전");
   const isMortgage = (l: ParseLine) => !isCancel(l) && has(l, "근저당권설정");
@@ -311,12 +319,12 @@ function headerDong(header: ParseLine, confMin: number): { unit: string; dong: O
 function parseProperties(header: ParseLine | undefined, building: ParseLine[], unit: ParseLine[], confMin: number, headers: ParseLine[] = []): RegistryRead["properties"] {
   // 1동의 건물: 소재·지번 (건물명칭·도로명주소 빼기)
   // 페이지마다 위에 찍힌 "[집합건물] …" 머리줄은 표 내용이 아니다
-  const lots = building.filter((line) => !/집합건물/.test(line.text)).flatMap((line) => {
+  const allLots = building.filter((line) => !/집합건물/.test(line.text)).flatMap((line) => {
     const m = ADDRESS_LOT_RE.exec(line.text);
     return m ? [{ location: valueFrom(line, m[1], confMin), lotNumber: valueFrom(line, m[2], confMin) }] : [];
   });
   // 전유부분: 건물번호와 면적
-  const units = unit.flatMap((line) => {
+  const allUnits = unit.flatMap((line) => {
     const u = UNIT_RE.exec(line.text);
     if (!u) return [];
     // 구조 이름(「…구조」「…라멘조」「벽돌조」 등) 바로 뒤의 숫자가 전유 면적
@@ -335,6 +343,9 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
     ];
   });
 
+  // 등기부 하나에 전유부분은 하나다. 표시가 바뀌어 줄이 여러 개면(글자 PDF는 취소선을 알 수 없음) 마지막이 지금 표시다 (2026-11-09)
+  const units = allUnits.slice(-1);
+  const lots = allLots.slice(-1);
   // 표의 호수를 깨끗이 읽지 못했으면, 같은 등기부 머리줄([집합건물] …)의 호수를 쓴다
   const headerUnit = header ? UNIT_RE.exec(header.text) : null;
   const n = Math.max(lots.length, units.length);
@@ -361,9 +372,109 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
   return out;
 }
 
+// ── 토지·일반건물 표제부 (2026-11-09) ──────────────────────────────
+const LOT_CELL_RE = /^(산\s*)?\d+(?:-\d+)?(?:번지)?$/;
+const AREA_UNIT = "㎡|m²|m2|ㅁ|ㅠ|ㅁㅠ|rf|nf";
+const LAND_AREA_RE = new RegExp(`^([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})$`);
+// 건물내역의 층별 면적 칸: "1층 51.36㎡", "지하1층 30.5㎡", "옥탑1층 12㎡"
+const FLOOR_AREA_RE = new RegExp(`^((?:지하|지|옥탑)?\\s*\\d*\\s*층)\\s*([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})$`);
+const cells = (text: string) => text.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+
+/**
+ * 표제부 표의 줄들 → 표시 줄 묶음들. 맨 마지막 표시 줄이 지금 표시다
+ * (앞 표시는 말소된 것. 글자 PDF는 취소선을 알 수 없으므로 마지막 것을 쓴다).
+ */
+function displayRows(section: ParseLine[]): ParseLine[][] {
+  const body = section.filter((l) => !/^\s*표\s*시\s*번\s*호/.test(l.text) && !/^\s*\[(집합건물|건물|토지)\]/.test(l.text));
+  // 표시 줄 첫 줄: 첫 칸이 표시번호(숫자만)이고 다음 칸이 접수 날짜나 소재지. (지번만 있는 다음 줄과 헷갈리지 않게)
+  const isAddress = (c: string) => /(특별시|광역시|특별자치시|특별자치도|도)\s/.test(c) || /[시군구]\s+\S+[동리가읍면]/.test(c);
+  return blocks(body, (l) => {
+    const [no, next] = cells(l.text);
+    return /^\d+$/.test(no ?? "") && !!next && (DATE_RE.test(next) || isAddress(next));
+  });
+}
+
+/** 표시 줄 첫 줄의 소재지 칸: 표시번호·접수 날짜를 뺀 첫 주소 칸 */
+function plainLocation(row: ParseLine[], confMin: number): { location: OcrValue; lotNumber: OcrValue } {
+  const first = row[0];
+  const rest = first.text.replace(/^\s*\d+\s+/, "");
+  const cell = cells(rest).find((c) => /(특별시|광역시|특별자치시|특별자치도|도)\s/.test(c) || /[시군구]\s+\S+[동리가읍면]/.test(c));
+  if (!cell) return { location: v(null, false), lotNumber: v(null, false) };
+  // 소재지와 지번이 한 칸에 있으면 나누고, 아니면 다음 줄들의 첫 칸에서 지번을 찾는다
+  const same = /^(.*[동리가읍면로])\s+((?:산\s*)?\d+(?:-\d+)?)(?:번지)?$/.exec(cell);
+  if (same) return { location: valueFrom(first, same[1], confMin), lotNumber: valueFrom(first, same[2], confMin) };
+  for (const line of row.slice(1)) {
+    const lot = cells(line.text).map((c) => c.split(/\s+/)[0]).find((c) => LOT_CELL_RE.test(c));
+    if (lot) return { location: valueFrom(first, cell, confMin), lotNumber: valueFrom(line, lot.replace(/번지$/, ""), confMin) };
+  }
+  return { location: valueFrom(first, cell, confMin), lotNumber: v(null, false) };
+}
+
+/** 토지: 소재지·지번·면적. 건물: 소재지·지번·층별 면적 전부. 호수는 없다(빈 값) */
+function parsePlainProperty(kind: "plainBuilding" | "plainLand", section: ParseLine[], confMin: number): RegistryRead["properties"][number] | null {
+  const rows = displayRows(section);
+  const row = rows[rows.length - 1];
+  if (!row) return null;
+  const { location, lotNumber } = plainLocation(row, confMin);
+  let area: OcrValue = v(null, false);
+  if (kind === "plainLand") {
+    for (const line of row) {
+      const hit = cells(line.text).map((c) => LAND_AREA_RE.exec(c)).find(Boolean);
+      if (hit) {
+        area = { text: `${hit[1]}㎡`, uncertain: hit[2] !== "㎡" || valueConfidence(line, hit[1]) < confMin };
+        break;
+      }
+    }
+  } else {
+    const floors: { text: string; uncertain: boolean }[] = [];
+    for (const line of row) {
+      for (const c of cells(line.text)) {
+        const f = FLOOR_AREA_RE.exec(c);
+        if (f) floors.push({ text: `${compact(f[1])} ${f[2]}㎡`, uncertain: f[3] !== "㎡" || valueConfidence(line, f[2]) < confMin });
+      }
+    }
+    if (floors.length) area = { text: floors.map((f) => f.text).join(", "), uncertain: floors.some((f) => f.uncertain) };
+  }
+  return { location, lotNumber, unitNumber: v("", false), area };
+}
+
+/**
+ * 등기부 여러 개를 한 파일로 이어 붙였으면(공동담보·토지+건물) 등기부마다 나눈다.
+ * 갑구·을구 다음에 다시 표제부 제목이 나오면 새 등기부다. 그 바로 앞의 머리줄([토지] … 등)도 새 등기부로 옮긴다.
+ */
+function splitRegistries(lines: ParseLine[]): ParseLine[][] {
+  const out: ParseLine[][] = [[]];
+  let seenRights = false;
+  const isHead = (l: ParseLine) => /^\s*\[(집합건물|건물|토지)\]|고유번호|등기사항전부증명서|^\s*-\s*(집합건물|건물|토지)\s*-\s*$/.test(l.text);
+  for (const line of lines) {
+    const s = sectionOf(line);
+    if (s && TITLE_SECTIONS.includes(s) && seenRights) {
+      const prev = out[out.length - 1];
+      const moved: ParseLine[] = [];
+      while (prev.length && isHead(prev[prev.length - 1])) moved.unshift(prev.pop()!);
+      out.push(moved);
+      seenRights = false;
+    }
+    if (s === "gap" || s === "eul") seenRights = true;
+    out[out.length - 1].push(line);
+  }
+  return out.filter((c) => c.length);
+}
+
 /** Tesseract가 읽은 한 페이지(또는 여러 페이지를 이은) 줄들 → 등기부 내용 */
 export function parseRegistryLines(lines: ParseLine[], confMin = DEFAULT_CONF_MIN): RegistryRead {
-  const bySection: Record<Section, ParseLine[]> = { none: [], building: [], land: [], unit: [], landRight: [], gap: [], eul: [] };
+  const chunks = splitRegistries(lines);
+  if (chunks.length > 1) {
+    // 부동산은 등기부마다, 소유자·근저당권은 모든 줄에서 (같은 근저당권이 여러 등기부에 나오면 대조에서 한 건으로 본다)
+    const reads = chunks.map((c) => parseOneRegistry(c, confMin));
+    return { properties: reads.flatMap((r) => r.properties), owners: reads.flatMap((r) => r.owners), mortgages: reads.flatMap((r) => r.mortgages) };
+  }
+  return parseOneRegistry(lines, confMin);
+}
+
+/** 등기부 하나의 줄들 → 내용 */
+function parseOneRegistry(lines: ParseLine[], confMin: number): RegistryRead {
+  const bySection: Record<Section, ParseLine[]> = { none: [], building: [], land: [], unit: [], landRight: [], plainBuilding: [], plainLand: [], gap: [], eul: [] };
   let current: Section = "none";
   for (const line of lines) {
     const s = sectionOf(line);
@@ -375,7 +486,13 @@ export function parseRegistryLines(lines: ParseLine[], confMin = DEFAULT_CONF_MI
   }
   const header = bySection.none.find((l) => /집합건물\]/.test(l.text) && UNIT_RE.test(l.text));
   // 갑구·을구 제목 글자를 잘못 읽으면 줄이 엉뚱한 구역에 들어가므로, 근저당권은 표제부를 뺀 모든 줄에서 순서대로 찾는다
-  const rest = lines.filter((l) => !bySection.building.includes(l) && !bySection.land.includes(l) && !bySection.unit.includes(l) && !bySection.landRight.includes(l));
+  const titles = new Set([...bySection.building, ...bySection.land, ...bySection.unit, ...bySection.landRight, ...bySection.plainBuilding, ...bySection.plainLand]);
+  const rest = lines.filter((l) => !titles.has(l));
+  // 토지·일반건물 등기부: 표제부 하나 = 부동산 하나
+  const plain = (["plainBuilding", "plainLand"] as const).flatMap((k) => (bySection[k].length ? [parsePlainProperty(k, bySection[k], confMin)] : [])).filter((p) => p !== null);
+  if (plain.length && !bySection.unit.length) {
+    return { properties: plain, owners: parseOwners(bySection.gap, confMin), mortgages: parseMortgages(rest, confMin) };
+  }
   return {
     // 전유부분 제목을 잘못 읽으면 건물번호 줄이 다른 표제부 구역에 들어간다. 머리줄을 뺀 표제부 줄 전체에서 찾는다
     properties: parseProperties(

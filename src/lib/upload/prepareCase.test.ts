@@ -76,3 +76,39 @@ describe("parseDocumentFields", () => {
     expect(parseImageMeta(JSON.stringify([{ page: 0, dict: "/Type /Page" }]))).toBeNull();
   });
 });
+
+describe("prepareCase: 글자 PDF·등기부 여러 개 (2026-11-09)", () => {
+  /** 글자만 있는 PDF 흉내 (사진 없음) */
+  const textPdf = () => new Blob(["%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"]);
+  const piece = (str: string, y: number) => ({ str, x: 20, y, width: str.length * 10, height: 10 });
+  const landPage = [
+    piece("【 표 제 부 】  ( 토지의 표시 )", 800),
+    piece("1  2001년3월2일  서울특별시 가상구 나라동 123-4  대  210.5㎡", 780),
+    piece("【 갑 구 】  ( 소유권에 관한 사항 ) " + "가".repeat(200), 760),
+    piece("【 을 구 】", 740),
+  ];
+
+  it("스캔 사진이 없으면 글자를 바로 읽어 대조 항목 값만 남긴다 (서버로 보낼 사진 없음)", async () => {
+    const readText = vi.fn(async () => [landPage]);
+    const r = await prepareCase(HWP, textPdf(), undefined, readText);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.images).toHaveLength(0);
+    expect(r.textRead?.properties.map((p) => [p.location.text, p.lotNumber.text, p.area.text])).toEqual([["서울특별시 가상구 나라동", "123-4", "210.5㎡"]]);
+  });
+
+  it("글자도 사진도 없으면 처리 실패", async () => {
+    const r = await prepareCase(HWP, textPdf(), undefined, async () => [[piece("1/1", 10)]]);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.summary).toBe("processing_failed");
+  });
+
+  it("스캔 PDF 여러 개는 쪽 번호를 이어 붙이고, 글자 PDF가 섞여 있으면 따로 읽는다", async () => {
+    const r = await prepareCase(HWP, [pdf(1000), pdf(1000), textPdf()], undefined, async () => [landPage]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.images.map((o) => o.page)).toEqual([0, 1]);
+    expect(r.textRead?.properties).toHaveLength(1);
+  });
+});

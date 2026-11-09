@@ -43,9 +43,12 @@ function nextFilled(paras: string[], from: number): string | undefined {
 function parseProperties(paras: string[]): PropertyEntry[] {
   const end = paras.findIndex((p) => /^등기원인과/.test(labelOf(p)));
   const area = end === -1 ? paras : paras.slice(0, end);
-  const starts = area.map((p, i) => (/^(\d+\.\s*)?1동의\s*건물의\s*표시$/.test(p) ? i : -1)).filter((i) => i >= 0);
+  // 집합건물은 "1. 1동의 건물의 표시", 일반건물·토지는 "1. 건물" / "2. 토지" (2026-11-09 실제 서류)
+  const starts = area.map((p, i) => (/^(\d+\.\s*)?(1동의\s*건물의\s*표시|건\s*물|토\s*지)$/.test(p) ? i : -1)).filter((i) => i >= 0);
   return starts.map((s, n) => {
     const block = area.slice(s + 1, starts[n + 1] ?? area.length).filter(Boolean);
+    const plain = /(건\s*물|토\s*지)$/.exec(area[s]);
+    if (plain) return parsePlainProperty(/토/.test(plain[1]) ? "land" : "building", block);
     // 첫 줄: "경기도 성남시 분당구 서현동 255-1" → 소재지 / 지번
     const m = /^(.+?[동리가로])\s+(산?\d+(?:-\d+)?)(?:번지)?(?:\s+.*)?$/.exec(block[0] ?? "");
     // "1. 건물의 번호 : 제8층 제씨-809호[고유번호:…]" → "제8층 제씨-809호"
@@ -63,6 +66,32 @@ function parseProperties(paras: string[]): PropertyEntry[] {
       area: read(areaValue),
     };
   });
+}
+
+const PLAIN_AREA = "[\\d.,]+\\s*(?:㎡|m²|m2|제곱미터)";
+
+/**
+ * 일반건물·토지 (2026-11-09 실제 서류 모양):
+ *   건물: "고유번호[…]" / "서울특별시 ○구 ○동 123-4" / 건물 이름 / [도로명주소]… / 구조 줄 / "1층 51.36㎡" … (층마다 한 줄)
+ *   토지: "고유번호[…]" / "서울특별시 ○구 ○동 123-4 대 210.5㎡"
+ * 호수는 없으므로 빈 값으로 둔다(등기부도 빈 값). 건물 면적은 층별 면적 전부를 "1층 51.36㎡, 2층 50.1㎡"로 잇는다.
+ */
+function parsePlainProperty(kind: "land" | "building", block: string[]): PropertyEntry {
+  const lines = block.filter((l) => !/^고유번호/.test(l) && !/^\[도로명주소\]/.test(l));
+  const re = new RegExp(`^(.+?[동리가읍면로])\\s+((?:산\\s*)?\\d+(?:-\\d+)?)(?:번지)?(?:\\s+(.*))?$`);
+  const at = lines.findIndex((l) => re.test(l));
+  const m = at === -1 ? null : re.exec(lines[at]);
+  let area: string | undefined;
+  if (kind === "land") {
+    area = m?.[3] ? new RegExp(`(${PLAIN_AREA})$`).exec(m[3])?.[1] : undefined;
+  } else {
+    const floors = lines.flatMap((l) => {
+      const f = new RegExp(`^((?:지하|지|옥탑)?\\s*\\d*\\s*층)\\s*(${PLAIN_AREA})$`).exec(l);
+      return f ? [`${f[1].replace(/\s+/g, "")} ${f[2].replace(/\s+/g, "")}`] : [];
+    });
+    area = floors.length ? floors.join(", ") : undefined;
+  }
+  return { location: read(m?.[1]), lotNumber: read(m?.[2]), unitNumber: read(m ? "" : null), area: read(area) };
 }
 
 /** "2020년03월13일 접수 제14475호 순위 제3번으로 등기한 …" → 근저당권마다 접수일·접수번호·순위 */

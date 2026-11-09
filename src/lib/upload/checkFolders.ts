@@ -6,6 +6,7 @@
 //   - 파일 크기 한도는 없다 (2026-11-06 사용자 결정. 큰 등기부는 브라우저가 몇 쪽씩 나눠 보낸다).
 //   - 한 번에 최대 30건 = 한글 파일 30개.
 //   - 한글·PDF가 아닌 파일은 세지 않고 무시한다.
+// 2026-11-09 사용자 결정: 한 건에 등기부 PDF 여러 개(예: 토지·건물 등기부를 따로 받은 글자 PDF)를 받는다.
 
 /** 한 번에 올릴 수 있는 최대 건 수 (한글 파일 수) */
 export const MAX_CASES = 30;
@@ -27,9 +28,9 @@ export interface CaseCheck {
   folder: string;
   /** 폴더 전체 경로 */
   dir: string;
-  /** 검증할 수 있으면 두 파일의 경로 */
+  /** 검증할 수 있으면 한글 파일과 등기부 PDF(1개 이상)의 경로 */
   hwpPath?: string;
-  pdfPath?: string;
+  pdfPaths: string[];
   ok: boolean;
   /** 문제가 있을 때 화면에 보일 이유 */
   reasons: string[];
@@ -80,8 +81,8 @@ function nameKeys(name: string): Set<string> {
 }
 
 export interface NamePairing {
-  /** 한글 파일 경로 → 짝 PDF 경로 */
-  pairs: Map<string, string>;
+  /** 한글 파일 경로 → 짝 PDF 경로들 */
+  pairs: Map<string, string[]>;
   /** 짝을 못 정한 한글 파일 경로 → 이유 */
   unpaired: Map<string, string>;
   /** 어느 한글 파일과도 짝이 안 된 PDF 경로 */
@@ -94,13 +95,15 @@ export interface NamePairing {
  * - 폴더 안 모든 파일 이름에 들어 있는 조각(예: "근저당권")은 쓰지 않는다.
  * - 짝 PDF가 하나로 정해지지 않으면 추측하지 않고 이유를 남긴다.
  * - 한 PDF에 한글 파일 여러 개가 짝지어질 수 있다 (등기부 하나에 이전할 근저당권이 여러 건).
+ * - 한글 파일 하나에 PDF 여러 개가 짝지어질 수 있다 (2026-11-09: 토지·건물 등기부를 따로 받은 경우).
+ *   이 한글 파일만 가진 조각(예: 채무자 이름)이 들어 있는 PDF는 모두 그 건의 등기부다.
  * 잘못 짝지어지더라도 대조에서 접수번호가 등기부에 없으면 불일치로 나온다.
  */
 export function pairByName(hwps: FileInfo[], pdfs: FileInfo[]): NamePairing {
   const keys = new Map([...hwps, ...pdfs].map((f) => [f.path, nameKeys(f.name)]));
   const all = [...keys.values()];
   const generic = (k: string) => all.every((s) => s.has(k));
-  const pairs = new Map<string, string>();
+  const pairs = new Map<string, string[]>();
   const unpaired = new Map<string, string>();
 
   for (const h of hwps) {
@@ -108,8 +111,14 @@ export function pairByName(hwps: FileInfo[], pdfs: FileInfo[]): NamePairing {
     const shared = (p: FileInfo) => [...hk].filter((k) => keys.get(p.path)!.has(k) && !generic(k));
     // 이 PDF만 가진 조각이 함께 들어 있으면 짝
     const linked = pdfs.filter((p) => shared(p).some((k) => pdfs.every((o) => o === p || !keys.get(o.path)!.has(k))));
+    // 이 한글 파일만 가진 조각이 들어 있는 PDF들 (토지·건물 등기부처럼 한 건에 여러 개)
+    const own = pdfs.filter((p) => shared(p).some((k) => hwps.every((o) => o === h || !keys.get(o.path)!.has(k))));
+    if (own.length > 0 && linked.every((p) => own.includes(p))) {
+      pairs.set(h.path, own.map((p) => p.path));
+      continue;
+    }
     if (linked.length === 1) {
-      pairs.set(h.path, linked[0].path);
+      pairs.set(h.path, [linked[0].path]);
       continue;
     }
     const similar = linked.length > 1 ? linked : pdfs.filter((p) => shared(p).length > 0);
@@ -120,7 +129,7 @@ export function pairByName(hwps: FileInfo[], pdfs: FileInfo[]): NamePairing {
         : "파일 이름에 같은 값이 들어 있는 등기부등본 PDF 없음",
     );
   }
-  const used = new Set(pairs.values());
+  const used = new Set([...pairs.values()].flat());
   return { pairs, unpaired, orphanPdfs: pdfs.filter((p) => !used.has(p.path)).map((p) => p.path) };
 }
 
@@ -164,12 +173,12 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
     const pdfs = files.filter((f) => isPdf(f.name)).sort((a, b) => a.name.localeCompare(b.name));
     const folder = folderName(dir);
 
-    if (hwps.length <= 1 && pdfs.length <= 1) {
-      // 폴더 하나 = 1건 (예전과 같음)
+    if (hwps.length <= 1) {
+      // 폴더 하나 = 1건. 등기부 PDF는 여러 개여도 모두 이 건의 것 (2026-11-09)
       const reasons: string[] = [];
-      if (hwps.length === 0) reasons.push("한글 파일 없음");
+      if (hwps.length === 0) reasons.push(pdfs.length > 1 ? "한글 파일 없음 (등기부등본 PDF만 여러 개)" : "한글 파일 없음");
       if (pdfs.length === 0) reasons.push("등기부등본 PDF 없음");
-      cases.push({ id: hwps[0]?.path ?? pdfs[0]?.path ?? `${dir}/`, folder, dir, ok: false, reasons, hwpPath: hwps[0]?.path, pdfPath: pdfs[0]?.path });
+      cases.push({ id: hwps[0]?.path ?? pdfs[0]?.path ?? `${dir}/`, folder, dir, ok: false, reasons, hwpPath: hwps[0]?.path, pdfPaths: pdfs.map((p) => p.path) });
       continue;
     }
 
@@ -177,15 +186,15 @@ export function checkFolders(entries: UploadEntry[]): UploadCheckResult {
     const { pairs, unpaired, orphanPdfs } = pairByName(hwps, pdfs);
     const byPath = new Map(files.map((f) => [f.path, f]));
     for (const h of hwps) {
-      const pdfPath = pairs.get(h.path);
+      const pdfPaths = pairs.get(h.path) ?? [];
       const reasons: string[] = [];
       if (pdfs.length === 0) reasons.push("등기부등본 PDF 없음");
-      else if (!pdfPath) reasons.push(unpaired.get(h.path)!);
-      cases.push({ id: h.path, folder: `${folder} / ${stem(h.name)}`, dir, ok: false, reasons, hwpPath: h.path, pdfPath });
+      else if (pdfPaths.length === 0) reasons.push(unpaired.get(h.path)!);
+      cases.push({ id: h.path, folder: `${folder} / ${stem(h.name)}`, dir, ok: false, reasons, hwpPath: h.path, pdfPaths });
     }
     for (const p of orphanPdfs) {
       const name = byPath.get(p)!.name;
-      cases.push({ id: p, folder: `${folder} / ${name}`, dir, ok: false, reasons: [`짝이 되는 한글 파일 없음: ${name}`], pdfPath: p });
+      cases.push({ id: p, folder: `${folder} / ${name}`, dir, ok: false, reasons: [`짝이 되는 한글 파일 없음: ${name}`], pdfPaths: [p] });
     }
   }
 
