@@ -121,6 +121,21 @@ describe("checkFolders", () => {
     expect(p.orphanPdfs).toEqual(["A/근저당권_등기부.pdf"]);
   });
 
+  it("등기부 하나에 한글 파일 여러 개이고 세 파일 모두 채무자 이름이 들어 있으면 모두 그 등기부와 짝 (2026-11-09 실제 폴더)", () => {
+    const r = checkFolders([
+      f("A/확정채권양도증서(한진수)-1.hwp"),
+      f("A/근저당권양도증서(한진수)-위임장.hwp"),
+      f("A/부동산등기부등본(한진수)-경기도 광주시능평동 208-28 외 3필지.pdf"),
+    ]);
+    expect(r.cases).toHaveLength(2);
+    expect(r.cases.every((c) => c.ok && c.pdfPaths.length === 1)).toBe(true);
+  });
+
+  it("PDF가 하나여도 서류 종류를 나타내는 말(양도증서·등기부 등)만 같으면 짝짓지 않는다", () => {
+    const r = checkFolders([f("A/양도증서_김철수.hwp"), f("A/양도증서_이영희.hwp"), f("A/양도증서_박민수_등기부.pdf")]);
+    expect(r.cases.filter((c) => c.ok)).toHaveLength(0);
+  });
+
   it("번호가 이름이면 번호 전체로 짝짓는다 (1과 10을 섞지 않음)", () => {
     const r = checkFolders([f("A/1.hwp"), f("A/10.hwp"), f("A/10.pdf"), f("A/1.pdf")]);
     expect(r.cases.find((c) => c.id === "A/1.hwp")?.pdfPaths).toEqual(["A/1.pdf"]);

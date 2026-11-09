@@ -80,6 +80,16 @@ function nameKeys(name: string): Set<string> {
   return keys;
 }
 
+/**
+ * 서류 종류를 나타내는 말: 폴더 안 모든 파일 이름에 들어 있어도 이 말(또는 그 일부)로는 짝짓지 않는다.
+ * (2026-11-09: 한 등기부에 양도증서 한글 파일 2개가 있고 세 파일 모두 채무자 이름이 든 실제 폴더)
+ */
+const DOC_WORDS = [
+  "근저당권", "근저당권이전", "등기부등본", "부동산등기부등본", "등기사항전부증명서", "등기사항일부증명서", "부동산",
+  "양도증서", "확정채권", "위임장", "신청서", "서류", "집합건물", "건물", "토지", "원본", "사본", "스캔", "외필지", "필지",
+];
+const isDocWord = (k: string) => DOC_WORDS.some((w) => w.includes(k) || k.includes(w));
+
 export interface NamePairing {
   /** 한글 파일 경로 → 짝 PDF 경로들 */
   pairs: Map<string, string[]>;
@@ -102,7 +112,10 @@ export interface NamePairing {
 export function pairByName(hwps: FileInfo[], pdfs: FileInfo[]): NamePairing {
   const keys = new Map([...hwps, ...pdfs].map((f) => [f.path, nameKeys(f.name)]));
   const all = [...keys.values()];
-  const generic = (k: string) => all.every((s) => s.has(k));
+  // 폴더 안 모든 파일에 들어 있는 조각은 서류 종류를 나타내는 말(예: "근저당권")로 보고 쓰지 않는다.
+  // 다만 PDF가 하나뿐이고 그 조각이 서류 종류를 나타내는 말이 아니면(예: 세 파일 모두에 든 채무자 이름) 짝짓는 데 쓴다 (2026-11-09).
+  // (PDF·한글 파일이 여러 개면 모든 파일에 든 조각은 어차피 한 파일만의 조각이 될 수 없어 짝짓기에 쓰이지 않는다)
+  const generic = (k: string) => all.every((s) => s.has(k)) && (pdfs.length !== 1 || !/^[가-힣]{2,}$/.test(k) || isDocWord(k));
   const pairs = new Map<string, string[]>();
   const unpaired = new Map<string, string>();
 

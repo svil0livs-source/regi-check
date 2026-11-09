@@ -6,7 +6,7 @@ vi.mock("server-only", () => ({}));
 import { summarizeCase } from "@/lib/compare/summarize";
 import type { DocumentFields, FieldResult } from "@/types/verification";
 import type { OcrValue, RegistryMortgage, RegistryRead } from "@/lib/readers/registryOcr";
-import { verifyCase } from "./verifyCase";
+import { notInDocument, verifyCase } from "./verifyCase";
 
 const o = (text: string | null, uncertain = false): OcrValue => ({ text, uncertain });
 const v = (value: string | null) => ({ value });
@@ -192,5 +192,34 @@ describe("verifyCase: 토지+건물 공동담보를 한글 서류가 부동산�
   it("두 번째 줄의 순위가 어느 등기부와도 다르면 순위 불일치", () => {
     const rs = verifyCase(h("4"), r());
     expect(rs.filter((x) => x.status !== "match").map((x) => `${x.key}#${x.index}`)).toEqual(["rank#2"]);
+  });
+});
+
+describe("verifyCase: 등기명의인표시변경 서류 (2026-11-09 사용자 결정: 대조할 수 있는 항목은 모두)", () => {
+  const change = (ranks: string[], name = "가나다보험주식회사"): DocumentFields => ({
+    ...hwp(),
+    parties: { mortgagee: [v(name)], debtor: [] },
+    mortgages: ranks.map((r) => ({ receiptNumber: v(null), registrationDate: v(null), rank: v(r) })),
+    maxClaimAmount: v(null),
+    kind: "nameChange",
+  });
+
+  it("순위번호로 근저당권을 찾아 신청인·등록번호·순위번호·부동산만 대조, 서류에 없는 항목은 결과에 없음", () => {
+    const rs = verifyCase(change(["3", "4"]), reg([mortgage(), second()]));
+    expect(summarizeCase(rs, notInDocument(change(["3"])))).toBe("all_match");
+    expect(summarizeCase(rs)).toBe("needs_review"); // 서류 종류를 모르면 빠진 항목이 있어 전부 일치가 아니다
+    expect(rs.some((r) => ["receiptNumber", "registrationDate", "maxClaimAmount", "debtor"].includes(r.key))).toBe(false);
+    expect(status(rs, "rank")).toEqual(["match", "match"]);
+  });
+
+  it("등기부에 없는 순위번호는 불일치, 신청인이 다르면 불일치", () => {
+    const rs = verifyCase(change(["3", "7"], "다른보험주식회사"), reg([mortgage(), second()]));
+    expect(status(rs, "rank", 2)).toEqual(["mismatch"]);
+    expect(status(rs, "mortgagee")).toEqual(["mismatch"]);
+  });
+
+  it("등기부 순위번호를 읽지 못한 것이 있으면 없는 순위번호도 확인 필요", () => {
+    const rs = verifyCase(change(["7"]), reg([mortgage({ rank: "" })]));
+    expect(status(rs, "rank")).toEqual(["needs_review"]);
   });
 });

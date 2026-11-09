@@ -182,6 +182,45 @@ export function voteRegistryReads(reads: RegistryRead[]): RegistryRead {
   return {
     properties: voteList(reads.map((r) => r.properties), voteProp, unsureProp),
     owners: voteNameList(reads.map((r) => r.owners)),
-    mortgages: voteList(reads.map((r) => r.mortgages), voteMortgage, unsureMortgage),
+    mortgages: voteMortgages(reads.map((r) => r.mortgages)),
   };
+}
+
+const absent = (): OcrValue => ({ text: null, uncertain: true });
+/** 근저당권을 빠뜨린 읽기에서 그 자리를 채우는 빈 읽기 (다수결에서 반대표로 센다) */
+const absentMortgage = (): RegistryMortgage => ({
+  rank: "",
+  receiptNumber: absent(),
+  registrationDate: absent(),
+  maxClaimAmount: absent(),
+  mortgagee: absent(),
+  mortgageeIdFront: absent(),
+  debtors: [],
+  transfers: [],
+});
+
+/**
+ * 근저당권 목록 다수결 (2026-11-09 실제 집합 스캔본).
+ * 가장 많이 나온 길이의 목록들로 자리를 정하고, 근저당권 하나를 빠뜨린 읽기도 버리지 않는다:
+ * 접수번호가 그 자리의 다수결 접수번호와 똑같은 근저당권만 그 자리에 넣는다. 짝이 없는 자리는 빈 읽기(반대표)로 채운다.
+ * 그래서 과반은 늘 전체 읽기 수로 센다 (빠뜨린 읽기가 늘어도 덜 깐깐해지지 않는다).
+ */
+function voteMortgages(lists: RegistryMortgage[][]): RegistryMortgage[] {
+  const n = lists.length;
+  const byLen = new Map<number, RegistryMortgage[][]>();
+  for (const l of lists) byLen.set(l.length, [...(byLen.get(l.length) ?? []), l]);
+  const [same] = [...byLen.values()].sort((a, b) => b.length - a.length);
+  if (same.length * 2 <= n) return voteList(lists, voteMortgage, unsureMortgage); // 길이부터 과반이 없으면 예전대로 모두 불확실
+  const len = same[0].length;
+  const slotKeys = Array.from({ length: len }, (_, i) => voteValue(same.map((l) => l[i].receiptNumber)));
+  return slotKeys.map((key, i) => {
+    const items = lists.map((l) => {
+      if (l.length === len) return l[i];
+      // 다른 길이의 읽기: 접수번호가 똑같은 근저당권이 꼭 하나일 때만 쓴다
+      if (key.uncertain || key.text === null) return absentMortgage();
+      const hits = l.filter((m) => m.receiptNumber.text !== null && voteKey(m.receiptNumber) === voteKey(key));
+      return hits.length === 1 ? hits[0] : absentMortgage();
+    });
+    return voteMortgage(items);
+  });
 }

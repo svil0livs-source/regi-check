@@ -131,6 +131,7 @@ export async function readTablePage(
     // (순위번호 칸은 보지 않는다: 손으로 그린 동그라미·체크가 취소선처럼 보일 수 있다)
     if (read[1]?.allStruck && read[2]?.allStruck) continue;
     for (const r of read) await fixAreas(page, gray, r, opts, signal);
+    for (const [k, r] of read.entries()) if (!(rankCol && k === 0)) await confirmWeakWords(page, gray, r, signal);
     out.push(...joinCells(read.map((r) => r.lines)));
   }
   return out;
@@ -168,10 +169,13 @@ async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortS
  */
 async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: RecognizeOptions, signal?: AbortSignal) {
   // 구조 이름은 「…구조」 말고도 「철근콘크리트라멘조」「벽돌조」처럼 「조」로 끝난다
-  if (r.lines.length > 5 || !/조/.test(r.lines.map((l) => l.text).join(" "))) return;
+  const all = r.lines.map((l) => l.text).join(" ");
+  // 토지 표제부의 면적 칸은 숫자와 단위뿐이다 (예: 「210"」처럼 ㎡를 따옴표로 읽음, 2026-11-09 실제 스캔본)
+  const landArea = r.lines.length <= 2 && /^\s*\d[\d,]*(?:\.\d+)?\s*\S{0,3}\s*$/.test(all);
+  if (!landArea && (r.lines.length > 5 || !/조/.test(all))) return;
   for (const line of r.lines) {
     // "114 .621'"처럼 숫자가 여러 단어로 쪼개질 수 있다: 숫자로 시작하는 첫 단어부터 줄 끝까지를 면적 자리로 본다
-    if (!/\d\s*\.\s*\d/.test(line.text)) continue;
+    if (!landArea && !/\d\s*\.\s*\d/.test(line.text)) continue;
     const i = line.words.findIndex((w) => /^\d/.test(w.text));
     if (i < 0 || !line.wordBoxes[i]) continue;
     const tail = line.wordBoxes.slice(i);
@@ -195,9 +199,27 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
     // 자르는 자리가 숫자 안으로 들어가면 끝 숫자가 잘린다 (예: 114.62 → "114.6", 2026-11-06 시험 서류).
     // 처음 읽은 것보다 짧아졌는데 소수 둘째 자리가 없으면 잘린 것일 수 있어 쓰지 않는다 (→ 해석 단계가 확신하지 않음으로 둔다)
     const decimals = (n: string) => n.length - n.indexOf(".") - 1;
-    const fits = (n: string) => /^\d[\d,]*\.\d+$/.test(n) && first.startsWith(n) && (n === first || decimals(n) >= 2);
+    // 토지 면적 칸: ㎡의 m을 숫자 하나로 읽어 「2101"」이 되므로, 처음 읽은 숫자의 앞부분(많아야 한 자리 짧은 것)이어야 한다
+    const fits = (n: string) =>
+      (/^\d[\d,]*\.\d+$/.test(n) && first.startsWith(n) && (n === first || decimals(n) >= 2)) ||
+      (landArea && /^\d[\d,]*$/.test(n) && first.startsWith(n) && first.length - n.length <= 1);
     let got: { num: string; conf: number } | null = null;
     for (const cut of cuts) {
+      if (landArea && !/\./.test(first)) {
+        // 소수점 없는 면적은 끝 숫자가 잘렸는지 숫자 모양으로 알 수 없다: 여러 크기로 읽어, 처음 숫자와 맞고 확신 있는 같은 읽기가 2번 이상일 때만 쓴다
+        const reads: { num: string; conf: number }[] = [];
+        for (const zoom of [1, 2, 1.5, 3]) {
+          reads.push(await readDigits(cut, (opts.scale / 1.5) * zoom));
+          const ok = reads.filter((r) => fits(r.num) && r.conf >= 80);
+          const twice = ok.find((r) => ok.filter((o) => o.num === r.num).length >= 2);
+          if (twice) {
+            got = { num: twice.num, conf: Math.min(...ok.filter((o) => o.num === twice.num).map((o) => o.conf)) };
+            break;
+          }
+        }
+        if (got) break;
+        continue;
+      }
       for (const zoom of [1, 2]) {
         const r = await readDigits(cut, (opts.scale / 1.5) * zoom);
         if (fits(r.num)) {
@@ -212,5 +234,46 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
     line.words.splice(i, line.words.length - i, { text: `${num}㎡`, confidence: conf });
     line.wordBoxes.splice(i);
     line.text = line.words.map((x) => x.text).join(" ");
+  }
+}
+
+/** 다시 읽어 볼 만큼 확신이 낮은 낱말 (registryParse.ts의 기본 기준과 같다) */
+const WEAK = 60;
+/** 다시 읽은 낱말을 믿을 확신도 (순위번호 다시 읽기와 같은 기준) */
+const SURE = 80;
+/** 한 칸에서 다시 읽을 낱말 수 한도 (얼룩이 많은 칸에서 시간이 끝없이 늘지 않도록) */
+const MAX_CONFIRM = 6;
+
+/**
+ * 확신이 낮은 낱말만 잘라 다시 읽어 확인한다 (2026-11-09 실제 집합 스캔본).
+ * 긴 회사 이름의 마지막 낱말을 맞게 읽고도 확신도가 0~18로 나와, 같은 이름을 5번 중 몇 번만 믿을 수 있었다.
+ * 낱말 하나만 원래 크기와 2배 크기로 다시 읽어, 처음과 **똑같은 글자**가 확신 있게(80 이상) 나올 때만 확신도를 올린다.
+ * 글자는 절대 바꾸지 않는다: 다르게 읽히거나 확신이 없으면 그대로 둔다(→ 해석 단계가 확신하지 않음으로 둔다).
+ */
+async function confirmWeakWords(page: Buffer, gray: GrayImage, r: BoxRead, signal?: AbortSignal) {
+  let budget = MAX_CONFIRM;
+  for (const line of r.lines) {
+    for (const [i, w] of line.words.entries()) {
+      const wb = line.wordBoxes[i];
+      if (w.confidence >= WEAK || !wb || !letters(w.text) || budget <= 0) continue;
+      budget--;
+      const b = r.toPage(wb);
+      const box: Box = { x0: Math.max(0, b.x0 - 4), y0: Math.max(0, b.y0 - 4), x1: Math.min(gray.width, b.x1 + 4), y1: Math.min(gray.height, b.y1 + 4) };
+      if (box.x1 - box.x0 < 4 || box.y1 - box.y0 < 4) continue;
+      for (const zoom of [1, 2]) {
+        const w2 = box.x1 - box.x0;
+        let pipe = sharp(page).extract({ left: box.x0, top: box.y0, width: w2, height: box.y1 - box.y0 }).greyscale();
+        if (zoom !== 1) pipe = pipe.resize({ width: w2 * zoom, kernel: "lanczos3" });
+        pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
+        const again = await recognizeImage(await pipe.png().toBuffer(), "7", signal);
+        const words = again.flatMap((l) => l.words);
+        const text = words.map((x) => x.text).join("");
+        const conf = words.length ? Math.min(...words.map((x) => x.confidence)) : 0;
+        if (text.replace(/\s+/g, "") === w.text.replace(/\s+/g, "") && conf >= SURE) {
+          w.confidence = conf;
+          break;
+        }
+      }
+    }
   }
 }

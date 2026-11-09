@@ -9,7 +9,7 @@ import { RegistryReadError, type RegistryRead } from "@/lib/readers/registryOcr"
 import { combineReads, readRegistryObjects, readRegistryPass } from "@/lib/readers/registryRead";
 import type { CaseSummary, DocumentFields, FieldResult } from "@/types/verification";
 import { CarryKeyMissing, openCarry, sealCarry } from "./readCarry";
-import { verifyCase } from "./verifyCase";
+import { notInDocument, verifyCase } from "./verifyCase";
 
 export interface CaseOutcome {
   folder: string;
@@ -29,7 +29,7 @@ export async function processCase(
   try {
     const registry = await readRegistryObjects(registryImages, signal);
     const results = verifyCase(hwp, registry);
-    return { folder, summary: summarizeCase(results), results };
+    return { folder, summary: summarizeCase(results, notInDocument(hwp)), results };
   } catch (err) {
     if (err instanceof RegistryReadError) return fail(err.message);
     if ((err as Error)?.name === "AbortError") return fail("처리가 취소됐습니다.");
@@ -88,5 +88,5 @@ export function compareCase(folder: string, hwp: DocumentFields, groups: Registr
   const voted = groups.map((g) => combineReads(g));
   const merged: RegistryRead = { properties: voted.flatMap((r) => r.properties), owners: voted.flatMap((r) => r.owners), mortgages: voted.flatMap((r) => r.mortgages) };
   const results = verifyCase(hwp, merged);
-  return { folder, summary: summarizeCase(results), results };
+  return { folder, summary: summarizeCase(results, notInDocument(hwp)), results };
 }

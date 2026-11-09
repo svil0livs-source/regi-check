@@ -260,12 +260,17 @@ function parseTransferBlock(block: ParseLine[], confMin: number): RegistryTransf
  *   - "N번근저당권변경"(부기등기 N-M)에 채권최고액이 있으면 → 그 근저당권의 채권최고액을 변경 후 금액으로 바꾼다.
  * 부기등기(이전·변경)는 순위번호 앞부분(N-)으로 주등기를 찾고, 못 찾으면 바로 앞 주등기에 붙인다.
  */
+/** 다른 등기를 가리키는 "N번근…" / "N번(n)근…" */
+const REF_RE = /(\d+)\s*번\s*(?:\(\s*\d+\s*\)\s*)?근/g;
+const REF_SETUP_RE = /\d+\s*번\s*(?:\(\s*\d+\s*\)\s*)?근\s*저\s*당\s*권\s*설\s*정/;
+
 function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[] {
   const has = (l: ParseLine, word: string) => fuzzyIncludes(letters(l.text), word);
   // '말소'는 짧은 낱말이라 오독 허용 없이 그대로 찾는다 (예: '주소'를 말소로 잘못 보지 않게)
   // "N번근저당권설정등기말소"는 칸이 좁아 "말소"가 다음 줄로 넘어가기도 한다 (2026-11-09 실제 글자 PDF).
   // 다른 등기를 "N번"으로 가리키는 "N번근저당권설정…"은 그 설정등기를 지우는 말소 줄이다 (변경·이전은 "N번근저당권변경/이전")
-  const isCancel = (l: ParseLine) => (letters(l.text).includes("말소") && has(l, "근저당권")) || /\d+\s*번\s*근\s*저\s*당\s*권\s*설\s*정/.test(l.text);
+  // 공동담보 등기부는 "1번(1)근저당권설정"처럼 번호 뒤에 괄호 번호가 붙는다 (2026-11-09 실제 스캔본)
+  const isCancel = (l: ParseLine) => (letters(l.text).includes("말소") && has(l, "근저당권")) || REF_SETUP_RE.test(l.text);
   const isChange = (l: ParseLine) => !isCancel(l) && has(l, "근저당권변경");
   const isTransfer = (l: ParseLine) => !isCancel(l) && has(l, "근저당권이전");
   const isMortgage = (l: ParseLine) => !isCancel(l) && has(l, "근저당권설정");
@@ -277,13 +282,15 @@ function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[]
   };
   // 그 밖의 등기 줄(질권·가압류 등)의 첫 줄: 칸 사이 두 칸 띄움 + 접수 날짜·번호. 앞 근저당권 묶음에 섞이지 않게 끊는다
   const isOtherRow = (l: ParseLine) => /\s{2}/.test(l.text) && DATE_RE.test(l.text) && RECEIPT_RE.test(l.text);
-  const isKnown = (l: ParseLine) => isCancel(l) || isChange(l) || isTransfer(l) || isMortgage(l);
+  // 「근저당권자 경…」처럼 권리자 칸 줄은 등기목적 줄이 아니다: 오독 허용 때문에 "근저당권자경"을 "근저당권변경"으로 보지 않게 (2026-11-09 실제 스캔본)
+  const isLabelLine = (l: ParseLine) => new RegExp(`^\\s*(?:${HOLDER_KW.source}|${DEBTOR_KW.source})`).test(l.text);
+  const isKnown = (l: ParseLine) => !isLabelLine(l) && (isCancel(l) || isChange(l) || isTransfer(l) || isMortgage(l));
   for (const block of blocks(lines, (l) => isKnown(l) || isOtherRow(l))) {
     const first = block[0];
     if (!isKnown(first)) continue;
     if (isCancel(first)) {
-      const target = /(\d+)\s*번\s*근/.exec(first.text)?.[1];
-      if (target) cancelled.add(target);
+      // 한 줄에 여러 근저당권을 말소하기도 한다 ("1번(1)근저당권설정, 2번(2)근저당권설정 등기말소")
+      for (const t of first.text.matchAll(REF_RE)) cancelled.add(t[1]);
       continue;
     }
     const subRank = /^\s*(\d+\s*-\s*\d+)/.exec(first.text)?.[1]?.replace(/\s+/g, "") ?? "";
@@ -388,10 +395,13 @@ function displayRows(section: ParseLine[]): ParseLine[][] {
   const body = section.filter((l) => !/^\s*표\s*시\s*번\s*호/.test(l.text) && !/^\s*\[(집합건물|건물|토지)\]/.test(l.text));
   // 표시 줄 첫 줄: 첫 칸이 표시번호(숫자만)이고 다음 칸이 접수 날짜나 소재지. (지번만 있는 다음 줄과 헷갈리지 않게)
   const isAddress = (c: string) => /(특별시|광역시|특별자치시|특별자치도|도)\s/.test(c) || /[시군구]\s+\S+[동리가읍면]/.test(c);
-  return blocks(body, (l) => {
+  const rows = blocks(body, (l) => {
     const [no, next] = cells(l.text);
     return /^\d+$/.test(no ?? "") && !!next && (DATE_RE.test(next) || isAddress(next));
   });
+  if (rows.length) return rows;
+  // 스캔본에서 표시번호·접수 칸을 잘못 읽으면(예: "ㅁ") 첫 칸 규칙으로 못 찾는다: 소재지 칸이 있는 줄을 표시 줄 첫 줄로 본다 (2026-11-09)
+  return blocks(body, (l) => cells(l.text).some(isAddress));
 }
 
 /** 표시 줄 첫 줄의 소재지 칸: 표시번호·접수 날짜를 뺀 첫 주소 칸 */

@@ -84,6 +84,36 @@ describe("voteRegistryReads", () => {
     expect(r.properties.every((p) => !p.location.uncertain)).toBe(true);
   });
 
+  // 2026-11-09 실제 집합 스캔본: 5번 중 1번이 근저당권 하나를 빠뜨렸다
+  const mortgage = (receipt: string, mortgagee: string) => ({ ...read("가").mortgages[0], receiptNumber: o(receipt), mortgagee: o(mortgagee) });
+  const withMortgages = (...ms: ReturnType<typeof mortgage>[]): RegistryRead => ({ ...read("가"), mortgages: ms });
+
+  it("근저당권 하나를 빠뜨린 읽기도 접수번호가 같은 근저당권은 다수결에 넣는다", () => {
+    const r = voteRegistryReads([
+      withMortgages(mortgage("제1호", "가은행"), mortgage("제5호", "나은행")),
+      withMortgages(mortgage("제1호", "가은행")), // 제5호를 빠뜨림
+      withMortgages(mortgage("제1호", "가은행X"), mortgage("제5호", "나은행")),
+      withMortgages(mortgage("제1호", "가은행Y"), mortgage("제5호", "나은행")),
+      withMortgages(mortgage("제7호", "가은행"), mortgage("제5호", "나은행")), // 접수번호를 잘못 읽음
+    ]);
+    expect(r.mortgages).toHaveLength(2);
+    expect(r.mortgages[0].mortgagee).toEqual(o("가은행")); // 3번(빠뜨린 읽기 포함) / 5번
+    expect(r.mortgages[1].mortgagee).toEqual(o("나은행"));
+  });
+
+  it("빠뜨린 읽기는 반대표로 센다: 과반은 늘 전체 읽기 수로", () => {
+    const r = voteRegistryReads([
+      withMortgages(mortgage("제1호", "가은행"), mortgage("제5호", "나은행")),
+      withMortgages(mortgage("제1호", "가은행"), mortgage("제5호", "다은행")),
+      withMortgages(mortgage("제1호", "가은행"), mortgage("제5호", "라은행")),
+      withMortgages(mortgage("제1호", "가은행")),
+      withMortgages(mortgage("제1호", "가은행")),
+    ]);
+    // 길이 2가 3번이라 과반, 제5호 자리는 나·다·라 + 빈 읽기 2개 → 과반 없음
+    expect(r.mortgages[1].mortgagee.uncertain).toBe(true);
+    expect(r.mortgages[0].mortgagee).toEqual(o("가은행"));
+  });
+
   it("1번만 읽었으면 그대로", () => {
     const one = read("가");
     expect(voteRegistryReads([one])).toBe(one);

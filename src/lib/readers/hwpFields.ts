@@ -73,7 +73,7 @@ const PLAIN_AREA = "[\\d.,]+\\s*(?:㎡|m²|m2|제곱미터)";
 /**
  * 일반건물·토지 (2026-11-09 실제 서류 모양):
  *   건물: "고유번호[…]" / "서울특별시 ○구 ○동 123-4" / 건물 이름 / [도로명주소]… / 구조 줄 / "1층 51.36㎡" … (층마다 한 줄)
- *   토지: "고유번호[…]" / "서울특별시 ○구 ○동 123-4 대 210.5㎡"
+ *   토지: "고유번호[…]" / "서울특별시 ○구 ○동 123-4 대 210.5㎡" (지목·면적이 다음 줄에 있기도 함)
  * 호수는 없으므로 빈 값으로 둔다(등기부도 빈 값). 건물 면적은 층별 면적 전부를 "1층 51.36㎡, 2층 50.1㎡"로 잇는다.
  */
 function parsePlainProperty(kind: "land" | "building", block: string[]): PropertyEntry {
@@ -84,6 +84,9 @@ function parsePlainProperty(kind: "land" | "building", block: string[]): Propert
   let area: string | undefined;
   if (kind === "land") {
     area = m?.[3] ? new RegExp(`(${PLAIN_AREA})$`).exec(m[3])?.[1] : undefined;
+    // 지목·면적이 소재지 다음 줄에 따로 있기도 하다 (2026-11-09 실제 서류: "경기도 ○시 ○동 208-28" / "대 210㎡")
+    const next = at === -1 ? undefined : lines[at + 1];
+    if (!area && next) area = new RegExp(`^[가-힣]{1,4}\\s*(${PLAIN_AREA})$`).exec(next)?.[1];
   } else {
     const floors = lines.flatMap((l) => {
       const f = new RegExp(`^((?:지하|지|옥탑)?\\s*\\d*\\s*층)\\s*(${PLAIN_AREA})$`).exec(l);
@@ -103,6 +106,26 @@ function parseMortgages(line: string | undefined): MortgageEntry[] {
     receiptNumber: read(m[2].replace(/\s+/g, "")),
     rank: read(m[3] ?? null),
   }));
+}
+
+/**
+ * 등기명의인표시변경 서류 (2026-11-09 실제 서류, 사용자 결정: 대조할 수 있는 항목은 모두 대조):
+ *   "변 경 할 사 항" / "을구1번 … 로 변경, 을구3번 … 로 변경, …" / … / "신청인 회사명 (110111-…)"
+ * 순위번호들과 신청인 이름·등록번호 앞 6자리만 뽑는다 (뒷자리는 버린다). 이 모양이 아니면 null.
+ */
+function parseNameChange(paras: string[]): { ranks: string[]; name: string | undefined; idFront: string | undefined } | null {
+  const ci = paras.findIndex((p) => /^변경할/.test(labelOf(p)));
+  if (ci === -1) return null;
+  const line = nextFilled(paras, ci);
+  const ranks = [...(line ?? "").matchAll(/을\s*구\s*(\d+)\s*번/g)].map((m) => m[1]);
+  if (!ranks.length) return null;
+  const app = paras.find((p) => /^신\s*청\s*인\s+\S/.test(p));
+  const body = app?.replace(/^신\s*청\s*인\s+/, "");
+  return {
+    ranks,
+    name: body?.replace(/\(.*$/, "").trim() || undefined,
+    idFront: body ? /\(\s*(\d{6})\s*-\s*[\d*]{7}\s*\)/.exec(body)?.[1] : undefined,
+  };
 }
 
 /** 한글 서류 문단들 → 대조 항목 */
@@ -137,6 +160,17 @@ export function extractHwpFields(paragraphs: string[]): DocumentFields {
   const debtorLine = di === -1 ? undefined : nextFilled(paras, di);
 
   const properties = parseProperties(paras);
+  const change = mi === -1 ? parseNameChange(paras) : null;
+  if (change) {
+    return {
+      parties: { mortgagee: splitNames(change.name), debtor: [] },
+      properties: properties.length ? properties : [UNREAD_PROPERTY()],
+      mortgages: change.ranks.map((r) => ({ receiptNumber: { value: null }, registrationDate: { value: null }, rank: read(r) })),
+      maxClaimAmount: { value: null },
+      mortgageeIdFront: read(change.idFront),
+      kind: "nameChange",
+    };
+  }
   return {
     parties: {
       mortgagee: splitNames(assignorName),
