@@ -189,6 +189,12 @@ describe("parseRegistryLines: 실제 스캔본 모양", () => {
     expect(r.mortgages[0].rank).toBe("10");
   });
 
+  it("근저당권자 이름이 「경」으로 시작해도(근저당권자경… ≈ 근저당권변경) 새 등기 줄로 보지 않는다 (2026-11-09 실제 스캔본)", () => {
+    const r = parseRegistryLines(scan("제13층 제1301호  철근콘크리트구조 114.62ㅁ", [L("근저당권자 경가나협동조합 110111-0018443")]));
+    expect(r.mortgages[0].mortgagee).toEqual({ text: "경가나협동조합", uncertain: false });
+    expect(r.mortgages[0].mortgageeIdFront.text).toBe("110111");
+  });
+
   it("질권 등 다른 등기의 채무자는 앞 근저당권에 섞지 않는다", () => {
     const r = parseRegistryLines(scan("제13층 제1301호  철근콘크리트구조 114.62ㅁ", [L("근저당권자 가나생명보험주식회사 110111-0018443")]));
     expect(r.mortgages[0].debtors.map((d) => d.text)).toEqual(["김가명"]);
@@ -281,6 +287,23 @@ describe("parseRegistryLines: 토지·일반건물 표제부", () => {
 
   it("「N번근저당권설정등기말소」에서 말소가 다음 줄로 넘어가도 그 근저당권을 후보에서 뺀다", () => {
     expect(parseRegistryLines(building()).mortgages.map((m) => m.rank)).toEqual(["1"]);
+  });
+
+  it("스캔본에서 표시번호·접수 칸을 잘못 읽어도 소재지 칸이 있는 줄을 표시 줄로 본다 (2026-11-09 실제 스캔본)", () => {
+    const scanned = land().map((l) => (/^1  2001/.test(l.text) ? L("ㅁ  서울특별시 가상구 나라동 123-4  도로  66㎡  2001년3월2일") : l)).filter((l) => !/^(2  |\(전 1\)|123-4  행정)/.test(l.text));
+    const [p] = parseRegistryLines(scanned).properties;
+    expect([p.location.text, p.lotNumber.text, p.area.text]).toEqual(["서울특별시 가상구 나라동", "123-4", "66㎡"]);
+  });
+
+  it("「1번(1)근저당권설정, 2번(2)근저당권설정」 말소 줄은 두 근저당권을 모두 후보에서 뺀다 (공동담보, 2026-11-09 실제 스캔본)", () => {
+    const lines = [
+      ...building().slice(0, -2),
+      L("3  1번(1)근저당권설정, 2번(2)근저당권설정  2022년1월3일 제111호  2022년1월3일  해지"),
+      L("4  근저당권설정  2023년1월3일  2023년1월3일  채권최고액 금50,000,000원"),
+      L("제222호  설정계약  채무자 김가명"),
+      L("근저당권자 경가나협동조합 110111-1234567"),
+    ];
+    expect(parseRegistryLines(lines).mortgages.map((m) => m.rank)).toEqual(["4"]);
   });
 
   it("건물·토지 등기부를 이어 붙이면 부동산 2개, 근저당권은 등기부마다", () => {

@@ -115,6 +115,27 @@ describe("extractHwpFields: 일반건물·토지 (2026-11-09 실제 서류 모�
       ["서울특별시 가상구 나라동", "123-4", "", "210.5㎡"],
     ]);
   });
+
+  it("토지의 지목·면적이 소재지 다음 줄에 있어도 읽는다 (2026-11-09 실제 서류 모양)", () => {
+    const f = extractHwpFields(["위 임 장", "1. 토지", "경기도 시험시 나라동 208-28", "대 210㎡", "2. 토지", "경기도 시험시 나라동 208-29", "도로 66㎡", "등기원인과 그연월일"]);
+    expect(f.properties.map((p) => [p.lotNumber.value, p.area.value])).toEqual([["208-28", "210㎡"], ["208-29", "66㎡"]]);
+  });
+});
+
+describe("extractHwpFields: 등기명의인표시변경 서류 (2026-11-09 실제 서류 모양, 값은 가짜)", () => {
+  it("「변경할 사항」의 을구 순위번호들과 신청인 이름·등록번호 앞 6자리", () => {
+    const f = extractHwpFields([
+      "위 임 장", "1. 토지", "경기도 시험시 나라동 208-28", "대 210㎡", "등기원인과 그연월일", "2026년 10월 1일 주소변경",
+      "등 기 의 목 적", "등기명의인표시변경", "변 경 할 사 항",
+      "을구1번 근저당권자 주소 (갑)로 변경, 을구3번 근저당권자 주소 (갑)로 변경",
+      "신청인 가나다협동조합 (110111-1234567)", "시험시 시험로 1",
+    ]);
+    expect(f.kind).toBe("nameChange");
+    expect(f.mortgages.map((m) => m.rank.value)).toEqual(["1", "3"]);
+    expect(f.parties.mortgagee).toEqual([{ value: "가나다협동조합" }]);
+    expect(f.mortgageeIdFront).toEqual({ value: "110111" });
+    expect(f.properties[0].area.value).toBe("210㎡");
+  });
 });
 
 describe("readHwpParagraphs", () => {

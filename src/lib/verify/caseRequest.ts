@@ -88,7 +88,8 @@ export function parseDocumentFields(json: string): DocumentFields | null {
   if (!mortgages || !maxClaimAmount || !mortgageeIdFront) return null;
   // 등록번호는 앞 6자리만 받는다 (뒷자리가 섞여 오면 받지 않음)
   if (mortgageeIdFront.value !== null && mortgageeIdFront.value.replace(/\D/g, "").length > 6) return null;
-  return { parties, properties, mortgages, maxClaimAmount, mortgageeIdFront };
+  if (raw.kind !== undefined && raw.kind !== "nameChange") return null;
+  return { parties, properties, mortgages, maxClaimAmount, mortgageeIdFront, ...(raw.kind === "nameChange" ? { kind: "nameChange" as const } : {}) };
 }
 
 /** 사진 정보 목록(JSON 글자)을 검사해 돌려준다. 모양이 틀리면 null */

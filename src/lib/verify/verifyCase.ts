@@ -39,6 +39,7 @@ const receiptOf = (v: ExtractedValue) => (v.value ? normalizeReceiptNumber(v.val
  * - 찾지 못하면: 번호를 확신할 수 있으면 「해당 접수번호 없음」(불일치), 아니면 「확인 필요」
  */
 function selectMortgages(reg: RegistryRead, hwp: DocumentFields) {
+  if (hwp.kind === "nameChange") return selectByRank(reg, hwp);
   const forced: Forced[] = [];
   const all = reg.mortgages;
   const used = new Set<RegistryMortgage>();
@@ -86,6 +87,37 @@ function selectMortgages(reg: RegistryRead, hwp: DocumentFields) {
   });
   return { picked, forced };
 }
+
+/**
+ * 등기명의인표시변경 서류: 접수번호가 없으므로 순위번호로 등기부의 근저당권을 찾는다 (2026-11-09).
+ * 토지·건물 등기부가 함께 있으면 같은 순위번호가 등기부마다 있을 수 있어, 아직 짝짓지 않은 것부터 고른다.
+ * 찾지 못하면: 등기부의 순위번호를 모두 확신할 수 있으면 「해당 순위번호 없음」(불일치), 아니면 「확인 필요」.
+ */
+function selectByRank(reg: RegistryRead, hwp: DocumentFields) {
+  const forced: Forced[] = [];
+  const used = new Set<RegistryMortgage>();
+  const picked = hwp.mortgages.map((m, i) => {
+    const want = (m.rank.value ?? "").replace(/\D/g, "");
+    if (!want) return undefined; // 한글 서류에서 못 읽음 → 비교 결과 「읽지 못함」 그대로
+    const hits = reg.mortgages.filter((r) => r.rank === want);
+    const hit = hits.find((h) => !used.has(h)) ?? hits[0];
+    if (hit) {
+      used.add(hit);
+      return hit;
+    }
+    const sure = reg.mortgages.length > 0 && reg.mortgages.every((r) => r.rank);
+    forced.push(
+      sure
+        ? { key: "rank", index: i + 1, status: "mismatch", reason: "등기부등본에 해당 순위번호의 근저당권이 없음", registryValue: "해당 순위번호 없음" }
+        : { key: "rank", index: i + 1, status: "needs_review", reason: "등기부등본의 순위번호 일부를 읽지 못해 해당 근저당권을 고를 수 없음" },
+    );
+    return undefined;
+  });
+  return { picked, forced };
+}
+
+/** 등기명의인표시변경 서류에 없는 항목: 대조하지 않는다 */
+export const NOT_IN_NAME_CHANGE: readonly FieldKey[] = ["receiptNumber", "registrationDate", "maxClaimAmount", "debtor"];
 
 /**
  * 근저당권의 지금 권리자(= 이번 서류의 양도인): 원 근저당권자 → 이전(부기등기) 양수인 순서에서
@@ -181,7 +213,15 @@ function explainUnpicked(results: FieldResult[], picked: (RegistryMortgage | und
 }
 
 /** 건 하나를 대조한다: 근저당권 찾기 → 항목 비교 → 고르지 못한 항목은 강제 결과로 바꾸기 */
+/** 서류 종류상 그 한글 서류에 없는 항목 (요약에서 빠진 항목으로 보지 않는다) */
+export const notInDocument = (hwp: DocumentFields): readonly FieldKey[] => (hwp.kind === "nameChange" ? NOT_IN_NAME_CHANGE : []);
+
 export function verifyCase(hwp: DocumentFields, reg: RegistryRead): FieldResult[] {
+  const all = verifyAll(hwp, reg);
+  return hwp.kind === "nameChange" ? all.filter((r) => !NOT_IN_NAME_CHANGE.includes(r.key)) : all;
+}
+
+function verifyAll(hwp: DocumentFields, reg: RegistryRead): FieldResult[] {
   const { picked, forced } = selectMortgages(reg, hwp);
   const found = picked.filter(Boolean);
   // 근저당권을 하나도 찾지 못하면 그 근저당권에 딸린 양도인·채무자·채권최고액은 대조할 수 없다

@@ -127,6 +127,12 @@ export interface DocumentFields {
   mortgages: MortgageEntry[];
   maxClaimAmount: ExtractedValue; // 이전할 근저당권 채권최고액 합계
   mortgageeIdFront: ExtractedValue; // 양도인(근저당권자) 등록번호 앞 6자리 (뒷자리는 담지 않는다)
+  /**
+   * 서류 종류. 없으면 근저당권 이전 서류.
+   * "nameChange": 「변경할 사항」(을구 N번 … 로 변경)이 있는 등기명의인표시변경 서류 (2026-11-09 사용자 결정: 대조할 수 있는 항목은 모두 대조).
+   * 이 서류의 근저당권은 순위번호만, 양도인 칸은 신청인(= 등기부의 지금 근저당권자)이다. 접수번호·접수일·채권최고액·채무자는 서류에 없어 대조하지 않는다.
+   */
+  kind?: "nameChange";
 }
 
 /**
