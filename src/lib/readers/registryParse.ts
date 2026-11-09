@@ -295,8 +295,20 @@ function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[]
   return mortgages.filter((m) => !cancelled.has(m.rank));
 }
 
+/**
+ * 페이지 머리줄 "[집합건물] … 가람한빛타운 제110동 제13층 제1301호"에서 호수 바로 앞 낱말이 "…동"이면 그 동 (2026-11-09).
+ * 1동의 건물 이름 끝의 동이다. 소재지의 동(예: 가람동)은 지번 앞이라 호수 바로 앞에 오지 않는다.
+ */
+function headerDong(header: ParseLine, confMin: number): { unit: string; dong: OcrValue } | null {
+  const u = UNIT_RE.exec(header.text);
+  if (!u || u[2] !== "호") return null;
+  const before = header.text.slice(0, u.index).trim().split(/\s+/).pop() ?? "";
+  if (!/^[\p{L}\d-]*동$/u.test(before) || before.length < 2) return null;
+  return { unit: fixFloor(compact(u[1])), dong: valueFrom(header, before, confMin) };
+}
+
 /** 표제부: 1동 건물의 소재지번, 전유부분의 건물번호·면적 */
-function parseProperties(header: ParseLine | undefined, building: ParseLine[], unit: ParseLine[], confMin: number): RegistryRead["properties"] {
+function parseProperties(header: ParseLine | undefined, building: ParseLine[], unit: ParseLine[], confMin: number, headers: ParseLine[] = []): RegistryRead["properties"] {
   // 1동의 건물: 소재·지번 (건물명칭·도로명주소 빼기)
   // 페이지마다 위에 찍힌 "[집합건물] …" 머리줄은 표 내용이 아니다
   const lots = building.filter((line) => !/집합건물/.test(line.text)).flatMap((line) => {
@@ -333,6 +345,12 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
       const h = fixFloor(compact(headerUnit[1])).replace(/층제/, "층 제") + "호";
       if (valueConfidence(header!, compact(headerUnit[1])) >= confMin) unitNumber = v(h, false);
     }
+    // 동: 이 호수가 적힌 머리줄에서 (등기부 여러 개를 이어 붙였으면 호수로 머리줄을 찾는다)
+    const dongs = headers.map((h) => headerDong(h, confMin)).filter((d): d is NonNullable<typeof d> => !!d);
+    const unitKey = unitNumber.text ? compact(unitNumber.text).replace(/호$/, "") : null;
+    const mine = dongs.filter((d) => unitKey !== null && d.unit === unitKey);
+    const dong = (mine.find((d) => !d.dong.uncertain) ?? mine[0])?.dong;
+    if (dong?.text && unitNumber.text) unitNumber = v(`${dong.text} ${unitNumber.text}`, unitNumber.uncertain || dong.uncertain);
     out.push({
       location: lots[i]?.location ?? v(null, false),
       lotNumber: lots[i]?.lotNumber ?? v(null, false),
@@ -360,7 +378,13 @@ export function parseRegistryLines(lines: ParseLine[], confMin = DEFAULT_CONF_MI
   const rest = lines.filter((l) => !bySection.building.includes(l) && !bySection.land.includes(l) && !bySection.unit.includes(l) && !bySection.landRight.includes(l));
   return {
     // 전유부분 제목을 잘못 읽으면 건물번호 줄이 다른 표제부 구역에 들어간다. 머리줄을 뺀 표제부 줄 전체에서 찾는다
-    properties: parseProperties(header, bySection.building, [...bySection.unit, ...bySection.land, ...bySection.landRight].filter((l) => !/집합건물/.test(l.text)), confMin),
+    properties: parseProperties(
+      header,
+      bySection.building,
+      [...bySection.unit, ...bySection.land, ...bySection.landRight].filter((l) => !/집합건물/.test(l.text)),
+      confMin,
+      lines.filter((l) => /집합건물\]/.test(l.text)),
+    ),
     owners: parseOwners(bySection.gap, confMin),
     mortgages: parseMortgages(rest, confMin),
   };

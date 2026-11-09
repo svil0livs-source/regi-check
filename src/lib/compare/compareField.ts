@@ -17,6 +17,7 @@ import {
   normalizeText,
   normalizeUnitNumber,
   parseDate,
+  splitUnitDong,
 } from "./normalize";
 
 /**
@@ -44,7 +45,8 @@ export function toComparable(kind: CompareKind, raw: string): string | null {
       if (raw.trim() === "") return "";
       const text =
         kind === "lotNumber" ? normalizeLotNumber(raw)
-        : kind === "unitNumber" ? normalizeUnitNumber(raw)
+        // 동은 짝짓기·층호 비교에서 빼고 compareField에서 따로 대조한다
+        : kind === "unitNumber" ? splitUnitDong(normalizeUnitNumber(raw)).rest
         : kind === "area" ? normalizeArea(raw)
         : normalizeText(raw);
       // 글자가 있었는데 정규화 후 비었다면(예: 한자로만 적힘) 확신할 수 없다.
@@ -109,8 +111,17 @@ export function compareField(
     };
   }
 
-  return {
-    ...base,
-    status: hwpComparable === registryComparable ? "match" : "mismatch",
-  };
+  if (hwpComparable !== registryComparable) return { ...base, status: "mismatch" };
+
+  // 호수 앞의 동: 한글 서류에 동이 있으면 등기부의 동(1동의 건물 이름)과도 같아야 일치 (2026-11-09)
+  if (kind === "unitNumber") {
+    const hwpDong = splitUnitDong(normalizeUnitNumber(hwp.value)).dong;
+    const regDong = splitUnitDong(normalizeUnitNumber(registry.value)).dong;
+    if (hwpDong !== null && regDong === null) {
+      return { ...base, status: "needs_review", reason: "층·호는 같지만, 등기부등본에서 동(1동의 건물 이름)을 읽지 못해 동은 직접 확인이 필요합니다." };
+    }
+    if (hwpDong !== null && hwpDong !== regDong) return { ...base, status: "mismatch", reason: "동이 다릅니다." };
+  }
+
+  return { ...base, status: "match" };
 }

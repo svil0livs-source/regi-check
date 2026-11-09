@@ -70,7 +70,7 @@ describe("parseRegistryLines", () => {
       {
         location: { text: "경기도 성남시 분당구 정자동", uncertain: false },
         lotNumber: { text: "7", uncertain: false },
-        unitNumber: { text: "제15층 제1502호", uncertain: false },
+        unitNumber: { text: "102동 제15층 제1502호", uncertain: false }, // 동은 머리줄에서 (2026-11-09)
         area: { text: "101.23㎡", uncertain: false }, // 'ㅁㅠ'로 읽힌 ㎡
       },
     ]);
@@ -110,7 +110,7 @@ describe("parseRegistryLines", () => {
 
   it("호수를 '제1502초'처럼 잘못 읽으면 머리줄([집합건물])의 호수를 쓴다", () => {
     const lines = page().map((l) => (l.text.includes("제15층 제1502호                 철근") ? L(l.text.replace("제1502호", "제1502초")) : l));
-    expect(parseRegistryLines(lines).properties[0].unitNumber).toEqual({ text: "제15층 제1502호", uncertain: false });
+    expect(parseRegistryLines(lines).properties[0].unitNumber).toEqual({ text: "102동 제15층 제1502호", uncertain: false });
   });
 
   it("호수를 잘못 읽었고 머리줄도 없으면 고치지 않고 불확실", () => {
@@ -183,7 +183,7 @@ describe("parseRegistryLines: 실제 스캔본 모양", () => {
 
   it("층을 '충'으로 읽어도 호수를 읽고, 을구 제목을 잘못 읽어도 근저당권을 찾는다", () => {
     const r = parseRegistryLines(scan("2001년4월30일  제13충 제1301호  철근콘크리트벽식구 조 114.62ㅁ", [L("근저당권자 가나생명보험주식회사 110111-0018443")]));
-    expect(r.properties[0].unitNumber).toEqual({ text: "제13층 제1301호", uncertain: false });
+    expect(r.properties[0].unitNumber).toEqual({ text: "제110동 제13층 제1301호", uncertain: false });
     expect(r.properties[0].location.text).toBe("서울특별시 가상구 나라동");
     expect(r.mortgages).toHaveLength(1);
     expect(r.mortgages[0].rank).toBe("10");
@@ -213,8 +213,8 @@ describe("parseRegistryLines: 실제 스캔본 모양", () => {
     const holder = [L("근저당권자 가나생명보험주식회사 110111-0018443")];
     const r = parseRegistryLines([...scan("제13층 제1301호  철근콘크리트구조 114.62ㅁ", holder), ...scan("제12층 제1201호  철근콘크리트구조 104.25ㅁ", holder)]);
     expect(r.properties.map((p) => [p.unitNumber.text, p.area.text])).toEqual([
-      ["제13층 제1301호", "114.62㎡"],
-      ["제12층 제1201호", "104.25㎡"],
+      ["제110동 제13층 제1301호", "114.62㎡"],
+      ["제12층 제1201호", "104.25㎡"], // 이 호수가 적힌 머리줄이 없으면 동을 붙이지 않는다
     ]);
     expect(r.mortgages.map((m) => m.receiptNumber.text)).toEqual(["제8310호", "제8310호"]);
   });
