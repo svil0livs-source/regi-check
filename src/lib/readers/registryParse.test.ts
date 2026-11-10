@@ -312,3 +312,23 @@ describe("parseRegistryLines: 토지·일반건물 표제부", () => {
     expect(r.mortgages.map((m) => m.receiptNumber.text)).toEqual(["제14475호", "제14475호"]);
   });
 });
+
+// ── 스캔본 일반건물 표제부 (2026-11-10 실제 스캔본 모양, 값은 가짜): 칸 안의 줄들이 한 칸 글자로 이어져 온다 ──
+describe("parseRegistryLines: 스캔본 일반건물 표제부", () => {
+  const scan = (cell: string, low: string[] = []): ParseLine[] => [
+    L("【 표 제 부 】  ( 건물의 표시 )"),
+    L("표시번호  접 수  소재지번 및 건물번호  건 물 내 역  등기원인 및 기타사항"),
+    L(`1  2020년1월20일  서울특별시 가상구 나라동 123-4 [도로명주소] 서울특별시 가상구 나라로1길 2  ${cell}`, 95, low),
+    L("【 을  구 】  ( 소유권 이외의 권리에 관한 사항 )"),
+  ];
+  it("소재지번 칸의 도로명주소는 빼고, 건물내역 칸 안의 층별 면적을 모두 찾는다", () => {
+    const p = parseRegistryLines(scan("철근콘크리트구조 경사지붕 2층 단독주택 지1층 122.83㎡ 1층 72.74㎡ 2층 76.47㎡")).properties[0];
+    expect(p.location).toEqual({ text: "서울특별시 가상구 나라동", uncertain: false });
+    expect(p.lotNumber).toEqual({ text: "123-4", uncertain: false });
+    expect(p.area).toEqual({ text: "지1층 122.83㎡, 1층 72.74㎡, 2층 76.47㎡", uncertain: false });
+  });
+  it("단위를 못 읽은 층이나 「층」을 다른 글자로 읽은 층도 빠뜨리지 않고 확신 없음으로 둔다", () => {
+    expect(parseRegistryLines(scan("벽돌조 2층 단독주택 1층 72.741 2층 76.47㎡")).properties[0].area).toEqual({ text: "1층 72.741㎡, 2층 76.47㎡", uncertain: true });
+    expect(parseRegistryLines(scan("벽돌조 2층 단독주택 1층 72.74㎡ 2흥 76.47㎡")).properties[0].area).toEqual({ text: "1층 72.74㎡, 2층 76.47㎡", uncertain: true });
+  });
+});

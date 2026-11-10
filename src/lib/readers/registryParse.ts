@@ -385,6 +385,9 @@ const AREA_UNIT = "㎡|m²|m2|ㅁ|ㅠ|ㅁㅠ|rf|nf";
 const LAND_AREA_RE = new RegExp(`^([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})$`);
 // 건물내역의 층별 면적 칸: "1층 51.36㎡", "지하1층 30.5㎡", "옥탑1층 12㎡"
 const FLOOR_AREA_RE = new RegExp(`^((?:지하|지|옥탑)?\\s*\\d*\\s*층)\\s*([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})$`);
+// 스캔본은 건물내역 칸의 줄들이 한 칸 글자로 이어져 온다("…구조 2층 단독주택 지1층 122.83㎡ 1층 72.74㎡"): 칸 안에서 층별 면적을 모두 찾는다 (2026-11-10).
+// 단위를 못 읽은 층("1층 72.741")도 빠뜨리지 않고 확신 없음으로 넣는다 (층이 빠진 채 비교되지 않도록)
+const FLOOR_AREAS_RE = new RegExp(`(?<![가-힣\\d])((?:지하|지|옥탑)?\\s*\\d*\\s*층|(?:지하|지|옥탑)?\\s*\\d+\\s*[가-힣])\\s*([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})?(?=\\s|$)`, "g");
 const cells = (text: string) => text.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
 
 /**
@@ -408,8 +411,10 @@ function displayRows(section: ParseLine[]): ParseLine[][] {
 function plainLocation(row: ParseLine[], confMin: number): { location: OcrValue; lotNumber: OcrValue } {
   const first = row[0];
   const rest = first.text.replace(/^\s*\d+\s+/, "");
-  const cell = cells(rest).find((c) => /(특별시|광역시|특별자치시|특별자치도|도)\s/.test(c) || /[시군구]\s+\S+[동리가읍면]/.test(c));
-  if (!cell) return { location: v(null, false), lotNumber: v(null, false) };
+  const cell0 = cells(rest).find((c) => /(특별시|광역시|특별자치시|특별자치도|도)\s/.test(c) || /[시군구]\s+\S+[동리가읍면]/.test(c));
+  if (!cell0) return { location: v(null, false), lotNumber: v(null, false) };
+  // 스캔본 건물 표제부는 소재지번 칸에 "[도로명주소] …"가 이어져 온다: 대괄호부터는 뺀다 (2026-11-10)
+  const cell = cell0.replace(/\s*\[.*$/, "").trim() || cell0;
   // 소재지와 지번이 한 칸에 있으면 나누고, 아니면 다음 줄들의 첫 칸에서 지번을 찾는다
   const same = /^(.*[동리가읍면로])\s+((?:산\s*)?\d+(?:-\d+)?)(?:번지)?$/.exec(cell);
   if (same) return { location: valueFrom(first, same[1], confMin), lotNumber: valueFrom(first, same[2], confMin) };
@@ -440,7 +445,15 @@ function parsePlainProperty(kind: "plainBuilding" | "plainLand", section: ParseL
     for (const line of row) {
       for (const c of cells(line.text)) {
         const f = FLOOR_AREA_RE.exec(c);
-        if (f) floors.push({ text: `${compact(f[1])} ${f[2]}㎡`, uncertain: f[3] !== "㎡" || valueConfidence(line, f[2]) < confMin });
+        if (f) {
+          floors.push({ text: `${compact(f[1])} ${f[2]}㎡`, uncertain: f[3] !== "㎡" || valueConfidence(line, f[2]) < confMin });
+          continue;
+        }
+        for (const g of fixFloor(c).matchAll(FLOOR_AREAS_RE)) {
+          // "층"을 다른 글자로 읽은 층("2흥 76.47㎡")도 층으로 넣되 확신 없음으로 둔다
+          const label = compact(g[1]);
+          floors.push({ text: `${label.replace(/[가-힣]$/, "층")} ${g[2]}㎡`, uncertain: !label.endsWith("층") || g[3] !== "㎡" || valueConfidence(line, g[2]) < confMin });
+        }
       }
     }
     if (floors.length) area = { text: floors.map((f) => f.text).join(", "), uncertain: floors.some((f) => f.uncertain) };
