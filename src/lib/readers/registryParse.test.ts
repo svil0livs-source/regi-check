@@ -332,3 +332,28 @@ describe("parseRegistryLines: 스캔본 일반건물 표제부", () => {
     expect(parseRegistryLines(scan("벽돌조 2층 단독주택 1층 72.74㎡ 2흥 76.47㎡")).properties[0].area).toEqual({ text: "1층 72.74㎡, 2층 76.47㎡", uncertain: true });
   });
 });
+
+// ── 쪽마다 되풀이되는 머리줄로 소재지 확인 (2026-11-10 실제 스캔본 모양, 값은 가짜) ──
+describe("parseRegistryLines: 토지 머리줄 소재지", () => {
+  const land = (row: string, low: string[] = [], headers = 3): ParseLine[] => [
+    ...Array.from({ length: headers }, () => L("[토지] 경기도 가상시 나라동 123-4")),
+    L("【 표 제 부 】  ( 토지의 표시 )"),
+    L("표시번호  접 수  소 재 지 번  지 목  면 적  등기원인 및 기타사항"),
+    L(row, 95, low),
+    L("【 을  구 】  ( 소유권 이외의 권리에 관한 사항 )"),
+  ];
+  it("표제부 소재지를 한 글자 다르게 읽었어도 지번이 같으면 머리줄 소재지를 쓴다", () => {
+    const p = parseRegistryLines(land("1  2001년3월2일  경기도 가상시 니라동 123-4  대  82㎡")).properties[0];
+    expect(p.location).toEqual({ text: "경기도 가상시 나라동", uncertain: false });
+    expect(p.lotNumber).toEqual({ text: "123-4", uncertain: false });
+  });
+  it("표제부 소재지의 확신이 낮아도 지번이 같으면 머리줄 소재지를 쓴다", () => {
+    expect(parseRegistryLines(land("1  2001년3월2일  경기도 가상시 나라동 123-4  대  82㎡", ["나라동"])).properties[0].location).toEqual({ text: "경기도 가상시 나라동", uncertain: false });
+  });
+  it("지번이 머리줄과 다르면 머리줄을 쓰지 않는다", () => {
+    expect(parseRegistryLines(land("1  2001년3월2일  경기도 가상시 니라동 123-5  대  82㎡")).properties[0].location).toEqual({ text: "경기도 가상시 니라동", uncertain: false });
+  });
+  it("머리줄이 한 번뿐이면 쓰지 않는다", () => {
+    expect(parseRegistryLines(land("1  2001년3월2일  경기도 가상시 니라동 123-4  대  82㎡", [], 1)).properties[0].location).toEqual({ text: "경기도 가상시 니라동", uncertain: false });
+  });
+});

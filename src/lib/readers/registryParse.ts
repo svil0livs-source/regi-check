@@ -425,12 +425,36 @@ function plainLocation(row: ParseLine[], confMin: number): { location: OcrValue;
   return { location: valueFrom(first, cell, confMin), lotNumber: v(null, false) };
 }
 
+/**
+ * 쪽마다 맨 위에 되풀이되는 머리줄 "[토지] 경기도 가상시 나라동 123-4"에서 소재지·지번을 찾는다 (2026-11-10 실제 스캔본).
+ * 확신 있게 읽은 머리줄 가운데 똑같은 것이 2번 이상이고 다른 것보다 많을 때만 쓴다.
+ */
+function headerAddress(lines: ParseLine[], confMin: number): { location: string; lot: string } | null {
+  const count = new Map<string, number>();
+  for (const l of lines) {
+    const m = /^\s*\[\S{1,4}\]\s*(.*[동리가읍면로])\s+((?:산\s*)?\d+(?:-\d+)?)(?=\s|$)/.exec(l.text);
+    if (!m || !/(특별시|광역시|특별자치시|특별자치도|도|시|군|구)\s/.test(m[1])) continue;
+    if (valueConfidence(l, m[1].trim()) < confMin || valueConfidence(l, m[2]) < confMin) continue;
+    const key = `${m[1].trim().replace(/\s+/g, " ")}\u0000${compact(m[2])}`;
+    count.set(key, (count.get(key) ?? 0) + 1);
+  }
+  const [top, second] = [...count.entries()].sort((a, b) => b[1] - a[1]);
+  if (!top || top[1] < 2 || (second && second[1] === top[1])) return null;
+  const [location, lot] = top[0].split("\u0000");
+  return { location, lot };
+}
+
 /** 토지: 소재지·지번·면적. 건물: 소재지·지번·층별 면적 전부. 호수는 없다(빈 값) */
-function parsePlainProperty(kind: "plainBuilding" | "plainLand", section: ParseLine[], confMin: number): RegistryRead["properties"][number] | null {
+function parsePlainProperty(kind: "plainBuilding" | "plainLand", section: ParseLine[], confMin: number, header: { location: string; lot: string } | null = null): RegistryRead["properties"][number] | null {
   const rows = displayRows(section);
   const row = rows[rows.length - 1];
   if (!row) return null;
-  const { location, lotNumber } = plainLocation(row, confMin);
+  let { location, lotNumber } = plainLocation(row, confMin);
+  // 표제부 줄의 지번이 머리줄 지번과 같으면 같은 부동산이다: 소재지를 못 믿거나 머리줄과 다르게 읽었으면 여러 쪽에서 똑같이 읽은 머리줄 것을 쓴다
+  const same = (a: string | null, b: string) => a !== null && compact(a) === compact(b);
+  if (header && same(lotNumber.text, header.lot) && !lotNumber.uncertain && (location.uncertain || !same(location.text, header.location))) location = v(header.location, false);
+  // 소재지는 확실히 같은데 지번을 못 읽었거나 못 믿으면 머리줄 지번을 쓴다
+  else if (header && same(location.text, header.location) && !location.uncertain && (lotNumber.text === null || lotNumber.uncertain)) lotNumber = v(header.lot, false);
   let area: OcrValue = v(null, false);
   if (kind === "plainLand") {
     for (const line of row) {
@@ -512,7 +536,7 @@ function parseOneRegistry(lines: ParseLine[], confMin: number): RegistryRead {
   const titles = new Set([...bySection.building, ...bySection.land, ...bySection.unit, ...bySection.landRight, ...bySection.plainBuilding, ...bySection.plainLand]);
   const rest = lines.filter((l) => !titles.has(l));
   // 토지·일반건물 등기부: 표제부 하나 = 부동산 하나
-  const plain = (["plainBuilding", "plainLand"] as const).flatMap((k) => (bySection[k].length ? [parsePlainProperty(k, bySection[k], confMin)] : [])).filter((p) => p !== null);
+  const plain = (["plainBuilding", "plainLand"] as const).flatMap((k) => (bySection[k].length ? [parsePlainProperty(k, bySection[k], confMin, headerAddress(lines, confMin))] : [])).filter((p) => p !== null);
   if (plain.length && !bySection.unit.length) {
     return { properties: plain, owners: parseOwners(bySection.gap, confMin), mortgages: parseMortgages(rest, confMin) };
   }
