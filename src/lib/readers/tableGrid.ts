@@ -97,14 +97,14 @@ export function findVerticalLines(img: GrayImage, band: Box, minFrac = 0.85): nu
 }
 
 /** 칸 안에 글자가 있는지 (검은 점 비율) */
-export function hasInk(img: GrayImage, b: Box): boolean {
+export function hasInk(img: GrayImage, b: Box, min = 25): boolean {
   let dark = 0, total = 0;
   for (let y = b.y0; y < b.y1; y += 2) for (let x = b.x0; x < b.x1; x += 2) {
     total++;
     if (isDark(img, x, y)) dark++;
   }
   // 비율이 아니라 개수로 본다: 키 큰 칸에 숫자 하나만 있으면(순위번호 "6") 비율이 아주 작다
-  return total > 0 && dark >= 25;
+  return total > 0 && dark >= min;
 }
 
 /**

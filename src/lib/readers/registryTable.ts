@@ -123,8 +123,9 @@ export async function readTablePage(
     const rankCol = row.cells.length === 5;
     const none: BoxRead = { lines: [], allStruck: false, toPage: (b) => b };
     for (const [k, c] of row.cells.entries()) {
-      if (!hasInk(gray, c)) read.push(none);
-      else if (rankCol && k === 0) read.push(await readRank(page, gray, c, signal));
+      // 순위번호 칸은 가는 숫자 "1" 하나뿐이면 검은 점이 아주 적다: 기준을 낮춰 읽어 본다 (2026-11-10 실제 스캔본. 숫자 모양이 아니면 readRank가 버린다)
+      if (rankCol && k === 0) read.push(hasInk(gray, c, 8) ? await readRank(page, gray, c, signal) : none);
+      else if (!hasInk(gray, c)) read.push(none);
       else read.push(await readBox(page, gray, c, opts, signal, false, true));
     }
     // 등기목적·접수 칸 글자가 둘 다 모두 취소선이면 말소된 등기라 줄 전체를 버린다.
@@ -157,6 +158,13 @@ async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortS
   // 두 번 다 실패했을 때만, 옅은 회색(130보다 밝은 점)을 흰색으로 날린 흑백 사진으로 한 번 더 읽는다. 인쇄 숫자는 그보다 진해서 남는다.
   const c = await readBox(page, gray, box, { ...fixed, prep: "bin", threshold: 130 }, signal, true, true, 1);
   if (ok(c)) return c;
+  // 손글씨를 지운 사진에서 글자를 아예 못 찾는 칸이 있었다 (숫자 "1" 하나뿐인 칸, 2026-11-10 실제 스캔본).
+  // 세 번 다 글자가 없을 때만, 지우지 않은 원래 사진을 원래 크기와 2배로 읽어 둘이 같은 순위번호이고 한쪽은 확신(80 이상), 다른 쪽도 60 이상이면 쓴다.
+  if (!a.lines.length && !b.lines.length && !c.lines.length) {
+    const d = await readBox(page, gray, box, fixed, signal, true, false, 1);
+    const e = await readBox(page, gray, box, fixed, signal, true, false, 2);
+    if (/^\d+(-\d+)?$/.test(num(d)) && num(d) === num(e) && Math.max(conf(d), conf(e)) >= 80 && Math.min(conf(d), conf(e)) >= 60) return conf(d) >= conf(e) ? d : e;
+  }
   return { lines: [], allStruck: a.allStruck && b.allStruck, toPage: b.toPage };
 }
 
