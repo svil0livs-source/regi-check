@@ -8,7 +8,7 @@ import "server-only";
 import sharp from "sharp";
 import type { ParseLine } from "./registryParse";
 import { fuzzyIncludes } from "./registryParse";
-import { findGrid, hasInk, isStruck, unitGlyphCuts, withoutHandwriting, type Box, type GrayImage } from "./tableGrid";
+import { findGrid, glyphs, hasInk, isStruck, unitGlyphCuts, withoutHandwriting, type Box, type GrayImage } from "./tableGrid";
 import { recognizeImage, type OcrBoxLine, type RecognizeOptions } from "./tesseractOcr";
 
 const letters = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, "");
@@ -123,8 +123,9 @@ export async function readTablePage(
     const rankCol = row.cells.length === 5;
     const none: BoxRead = { lines: [], allStruck: false, toPage: (b) => b };
     for (const [k, c] of row.cells.entries()) {
-      if (!hasInk(gray, c)) read.push(none);
-      else if (rankCol && k === 0) read.push(await readRank(page, gray, c, signal));
+      // 순위번호 칸은 가는 숫자 "1" 하나뿐이면 검은 점이 아주 적다: 기준을 낮춰 읽어 본다 (2026-11-10 실제 스캔본. 숫자 모양이 아니면 readRank가 버린다)
+      if (rankCol && k === 0) read.push(hasInk(gray, c, 8) ? await readRank(page, gray, c, signal) : none);
+      else if (!hasInk(gray, c)) read.push(none);
       else read.push(await readBox(page, gray, c, opts, signal, false, true));
     }
     // 등기목적·접수 칸 글자가 둘 다 모두 취소선이면 말소된 등기라 줄 전체를 버린다.
@@ -157,6 +158,13 @@ async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortS
   // 두 번 다 실패했을 때만, 옅은 회색(130보다 밝은 점)을 흰색으로 날린 흑백 사진으로 한 번 더 읽는다. 인쇄 숫자는 그보다 진해서 남는다.
   const c = await readBox(page, gray, box, { ...fixed, prep: "bin", threshold: 130 }, signal, true, true, 1);
   if (ok(c)) return c;
+  // 손글씨를 지운 사진에서 글자를 아예 못 찾는 칸이 있었다 (숫자 "1" 하나뿐인 칸, 2026-11-10 실제 스캔본).
+  // 세 번 다 글자가 없을 때만, 지우지 않은 원래 사진을 원래 크기와 2배로 읽어 둘이 같은 순위번호이고 한쪽은 확신(80 이상), 다른 쪽도 60 이상이면 쓴다.
+  if (!a.lines.length && !b.lines.length && !c.lines.length) {
+    const d = await readBox(page, gray, box, fixed, signal, true, false, 1);
+    const e = await readBox(page, gray, box, fixed, signal, true, false, 2);
+    if (/^\d+(-\d+)?$/.test(num(d)) && num(d) === num(e) && Math.max(conf(d), conf(e)) >= 80 && Math.min(conf(d), conf(e)) >= 60) return conf(d) >= conf(e) ? d : e;
+  }
   return { lines: [], allStruck: a.allStruck && b.allStruck, toPage: b.toPage };
 }
 
@@ -176,7 +184,9 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
   for (const line of r.lines) {
     // "114 .621'"처럼 숫자가 여러 단어로 쪼개질 수 있다: 숫자로 시작하는 첫 단어부터 줄 끝까지를 면적 자리로 본다
     if (!landArea && !/\d\s*\.\s*\d/.test(line.text)) continue;
-    const i = line.words.findIndex((w) => /^\d/.test(w.text));
+    // 일반건물 층별 면적 줄("1층 72.74㎡")은 층 번호가 아니라 면적 숫자부터 본다 (2026-11-10 실제 스캔본: 층 번호를 면적에 붙여 "172.74㎡"로 만들었다)
+    const floorLabel = (k: number) => /^\d+\s*[층충중증]/.test(line.words[k].text) || (/^\d+$/.test(line.words[k].text) && /^[층충중증]/.test(line.words[k + 1]?.text ?? ""));
+    const i = line.words.findIndex((w, k) => /^\d/.test(w.text) && !floorLabel(k));
     if (i < 0 || !line.wordBoxes[i]) continue;
     const tail = line.wordBoxes.slice(i);
     const box = r.toPage({ x0: tail[0].x0, y0: Math.min(...tail.map((b) => b.y0)), x1: Math.max(...tail.map((b) => b.x1)), y1: Math.max(...tail.map((b) => b.y1)) });
@@ -184,12 +194,24 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
     const cuts = unitGlyphCuts(gray, pad).filter((c) => c - pad.x0 >= 20);
     if (!cuts.length) continue;
     const h = pad.y1 - pad.y0;
-    const readDigits = async (cut: number, scale: number) => {
-      const w = cut - 2 - pad.x0;
-      let pipe = sharp(page).extract({ left: pad.x0, top: pad.y0, width: w, height: h }).greyscale();
+    // 층 이름 글자의 끝 조각이 숫자 상자에 걸려 들어오면 없는 숫자로 읽힌다("지1층 122.83"을 "1122.83"으로):
+    // 자르는 자리 앞 덩어리들 가운데 낱말 사이만큼 벌어진 틈이 있으면 그 틈 뒤부터 읽는다 (2026-11-10 실제 스캔본)
+    let left = pad.x0;
+    if (!landArea) {
+      const before = glyphs(gray, { ...pad, x1: cuts[0] - 2 });
+      // 낱말 사이 틈: 13점 이상이고, 숫자 사이 틈(가운데값)의 2배가 넘는 것 (300dpi에서 숫자 사이는 3~9점, 낱말 사이는 15점쯤)
+      const gaps = before.slice(1).map((g, k) => g.x0 - before[k].x1);
+      const mid = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)] ?? 0;
+      for (const [k, gap] of gaps.entries()) if (gap >= 13 && gap > mid * 2) left = Math.max(pad.x0, before[k + 1].x0 - 3);
+    }
+    // psm: "7"은 한 줄, "8"은 낱말 하나. 숫자 두세 개뿐인 작은 사진은 낱말 하나로 크게 읽어야 안정적이다 (2026-11-10 실제 스캔본)
+    const readDigits = async (cut: number, scale: number, psm: "7" | "8" = "7") => {
+      const w = cut - 2 - left;
+      if (w < 4) return { num: "", conf: 0 };
+      let pipe = sharp(page).extract({ left, top: pad.y0, width: w, height: h }).greyscale();
       if (scale !== 1) pipe = pipe.resize({ width: Math.round(w * scale), kernel: "lanczos3" });
       pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
-      const digits = await recognizeImage(await pipe.png().toBuffer(), "7", signal, "0123456789.,");
+      const digits = await recognizeImage(await pipe.png().toBuffer(), psm, signal, "0123456789.,");
       const num = digits.map((d) => d.text).join("").replace(/\s+/g, "");
       return { num, conf: Math.min(...digits.flatMap((d) => d.words.map((x) => x.confidence))) };
     };
@@ -208,8 +230,9 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
       if (landArea && !/\./.test(first)) {
         // 소수점 없는 면적은 끝 숫자가 잘렸는지 숫자 모양으로 알 수 없다: 여러 크기로 읽어, 처음 숫자와 맞고 확신 있는 같은 읽기가 2번 이상일 때만 쓴다
         const reads: { num: string; conf: number }[] = [];
-        for (const zoom of [1, 2, 1.5, 3]) {
-          reads.push(await readDigits(cut, (opts.scale / 1.5) * zoom));
+        // 두 자리 면적("82㎡")은 한 줄 읽기가 크기마다 다른 숫자를 냈고, 낱말 하나로 3~4배 키워 읽으면 늘 같았다 (2026-11-10 실제 스캔본)
+        for (const [zoom, psm] of [[1, "7"], [2, "7"], [3, "8"], [4, "8"], [2, "8"], [1.5, "7"], [3, "7"]] as const) {
+          reads.push(await readDigits(cut, (opts.scale / 1.5) * zoom, psm));
           const ok = reads.filter((r) => fits(r.num) && r.conf >= 80);
           const twice = ok.find((r) => ok.filter((o) => o.num === r.num).length >= 2);
           if (twice) {
@@ -228,6 +251,38 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
         }
       }
       if (got) break;
+      // 처음 읽기가 앞에 없는 숫자를 붙였으면("122.83"을 "1122.83"으로) 앞부분 맞추기로는 못 고친다:
+      // 낱말 하나로 크게 두 번 읽어 둘 다 확신 있게 같은 값이고, 그 값이 처음 읽은 숫자 안에 그대로 들어 있을 때만 쓴다 (2026-11-10 실제 스캔본)
+      if (!landArea) {
+        // 숫자 덩어리 수(줄 높이의 0.6배가 넘는 덩어리)와 읽은 숫자 수가 같아야 한다: 없는 숫자를 지어낸 읽기를 거른다
+        const tall = glyphs(gray, { ...pad, x0: left, x1: cut - 2 }).filter((g) => g.y1 - g.y0 > (pad.y1 - pad.y0 - 12) * 0.6).length;
+        // 숫자만 잘라 읽으면 틀리는 줄도, 줄 처음(층 이름)부터 단위 앞까지 함께 읽으면 맞게 읽혔다 ("층 122.83"): 줄째로 읽어 끝의 숫자를 쓴다
+        const lineBox = r.toPage(line.bbox);
+        const readLine = async (zoom: number) => {
+          const x0 = Math.max(0, Math.min(lineBox.x0, left) - 4);
+          const w = cut - 2 - x0;
+          let pipe = sharp(page).extract({ left: x0, top: pad.y0, width: w, height: h }).greyscale();
+          if (zoom !== 1) pipe = pipe.resize({ width: Math.round(w * zoom), kernel: "lanczos3" });
+          pipe = pipe.extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 255, g: 255, b: 255 } });
+          const words = (await recognizeImage(await pipe.png().toBuffer(), "7", signal)).flatMap((l) => l.words);
+          const lastWord = words[words.length - 1];
+          return { num: lastWord?.text.trim() ?? "", conf: lastWord?.confidence ?? 0 };
+        };
+        const scale = opts.scale / 1.5;
+        const tries = [() => readLine(scale), () => readLine(scale * 2), () => readDigits(cut, scale * 3, "8"), () => readLine(scale * 3), () => readDigits(cut, scale * 4, "8")];
+        const ok: { num: string; conf: number }[] = [];
+        for (const read of tries) {
+          const r = await read();
+          if (!/^\d+\.\d\d$/.test(r.num) || r.num.replace(/\D/g, "").length !== tall || r.conf < 80) continue;
+          const same = ok.find((o) => o.num === r.num);
+          if (same) {
+            got = { num: r.num, conf: Math.min(same.conf, r.conf) };
+            break;
+          }
+          ok.push(r);
+        }
+        if (got) break;
+      }
     }
     if (!got) continue;
     const { num, conf } = got;

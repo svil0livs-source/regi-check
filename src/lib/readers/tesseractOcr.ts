@@ -125,7 +125,7 @@ export interface OcrBoxLine extends OcrLine {
 /**
  * 이미 손질한 사진(PNG) 하나를 읽어 줄마다 글자·단어 확신도·상자를 돌려준다. (2026-11-06 표 칸 단위 읽기)
  */
-export async function recognizeImage(png: Buffer, psm: Psm | "7", signal?: AbortSignal, whitelist = ""): Promise<OcrBoxLine[]> {
+export async function recognizeImage(png: Buffer, psm: Psm | "7" | "8", signal?: AbortSignal, whitelist = ""): Promise<OcrBoxLine[]> {
   const data = await oneAtATime(async () => {
     if (signal?.aborted) throw new DOMException("처리가 취소됐습니다.", "AbortError");
     const worker = await getWorker();

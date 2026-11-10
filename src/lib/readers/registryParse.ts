@@ -385,6 +385,9 @@ const AREA_UNIT = "㎡|m²|m2|ㅁ|ㅠ|ㅁㅠ|rf|nf";
 const LAND_AREA_RE = new RegExp(`^([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})$`);
 // 건물내역의 층별 면적 칸: "1층 51.36㎡", "지하1층 30.5㎡", "옥탑1층 12㎡"
 const FLOOR_AREA_RE = new RegExp(`^((?:지하|지|옥탑)?\\s*\\d*\\s*층)\\s*([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})$`);
+// 스캔본은 건물내역 칸의 줄들이 한 칸 글자로 이어져 온다("…구조 2층 단독주택 지1층 122.83㎡ 1층 72.74㎡"): 칸 안에서 층별 면적을 모두 찾는다 (2026-11-10).
+// 단위를 못 읽은 층("1층 72.741")도 빠뜨리지 않고 확신 없음으로 넣는다 (층이 빠진 채 비교되지 않도록)
+const FLOOR_AREAS_RE = new RegExp(`(?<![가-힣\\d])((?:지하|지|옥탑)?\\s*\\d*\\s*층|(?:지하|지|옥탑)?\\s*\\d+\\s*[가-힣])\\s*([\\d,]+(?:\\.\\d+)?)\\s*(${AREA_UNIT})?(?=\\s|$)`, "g");
 const cells = (text: string) => text.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
 
 /**
@@ -408,8 +411,10 @@ function displayRows(section: ParseLine[]): ParseLine[][] {
 function plainLocation(row: ParseLine[], confMin: number): { location: OcrValue; lotNumber: OcrValue } {
   const first = row[0];
   const rest = first.text.replace(/^\s*\d+\s+/, "");
-  const cell = cells(rest).find((c) => /(특별시|광역시|특별자치시|특별자치도|도)\s/.test(c) || /[시군구]\s+\S+[동리가읍면]/.test(c));
-  if (!cell) return { location: v(null, false), lotNumber: v(null, false) };
+  const cell0 = cells(rest).find((c) => /(특별시|광역시|특별자치시|특별자치도|도)\s/.test(c) || /[시군구]\s+\S+[동리가읍면]/.test(c));
+  if (!cell0) return { location: v(null, false), lotNumber: v(null, false) };
+  // 스캔본 건물 표제부는 소재지번 칸에 "[도로명주소] …"가 이어져 온다: 대괄호부터는 뺀다 (2026-11-10)
+  const cell = cell0.replace(/\s*\[.*$/, "").trim() || cell0;
   // 소재지와 지번이 한 칸에 있으면 나누고, 아니면 다음 줄들의 첫 칸에서 지번을 찾는다
   const same = /^(.*[동리가읍면로])\s+((?:산\s*)?\d+(?:-\d+)?)(?:번지)?$/.exec(cell);
   if (same) return { location: valueFrom(first, same[1], confMin), lotNumber: valueFrom(first, same[2], confMin) };
@@ -420,12 +425,36 @@ function plainLocation(row: ParseLine[], confMin: number): { location: OcrValue;
   return { location: valueFrom(first, cell, confMin), lotNumber: v(null, false) };
 }
 
+/**
+ * 쪽마다 맨 위에 되풀이되는 머리줄 "[토지] 경기도 가상시 나라동 123-4"에서 소재지·지번을 찾는다 (2026-11-10 실제 스캔본).
+ * 확신 있게 읽은 머리줄 가운데 똑같은 것이 2번 이상이고 다른 것보다 많을 때만 쓴다.
+ */
+function headerAddress(lines: ParseLine[], confMin: number): { location: string; lot: string } | null {
+  const count = new Map<string, number>();
+  for (const l of lines) {
+    const m = /^\s*\[\S{1,4}\]\s*(.*[동리가읍면로])\s+((?:산\s*)?\d+(?:-\d+)?)(?=\s|$)/.exec(l.text);
+    if (!m || !/(특별시|광역시|특별자치시|특별자치도|도|시|군|구)\s/.test(m[1])) continue;
+    if (valueConfidence(l, m[1].trim()) < confMin || valueConfidence(l, m[2]) < confMin) continue;
+    const key = `${m[1].trim().replace(/\s+/g, " ")}\u0000${compact(m[2])}`;
+    count.set(key, (count.get(key) ?? 0) + 1);
+  }
+  const [top, second] = [...count.entries()].sort((a, b) => b[1] - a[1]);
+  if (!top || top[1] < 2 || (second && second[1] === top[1])) return null;
+  const [location, lot] = top[0].split("\u0000");
+  return { location, lot };
+}
+
 /** 토지: 소재지·지번·면적. 건물: 소재지·지번·층별 면적 전부. 호수는 없다(빈 값) */
-function parsePlainProperty(kind: "plainBuilding" | "plainLand", section: ParseLine[], confMin: number): RegistryRead["properties"][number] | null {
+function parsePlainProperty(kind: "plainBuilding" | "plainLand", section: ParseLine[], confMin: number, header: { location: string; lot: string } | null = null): RegistryRead["properties"][number] | null {
   const rows = displayRows(section);
   const row = rows[rows.length - 1];
   if (!row) return null;
-  const { location, lotNumber } = plainLocation(row, confMin);
+  let { location, lotNumber } = plainLocation(row, confMin);
+  // 표제부 줄의 지번이 머리줄 지번과 같으면 같은 부동산이다: 소재지를 못 믿거나 머리줄과 다르게 읽었으면 여러 쪽에서 똑같이 읽은 머리줄 것을 쓴다
+  const same = (a: string | null, b: string) => a !== null && compact(a) === compact(b);
+  if (header && same(lotNumber.text, header.lot) && !lotNumber.uncertain && (location.uncertain || !same(location.text, header.location))) location = v(header.location, false);
+  // 소재지는 확실히 같은데 지번을 못 읽었거나 못 믿으면 머리줄 지번을 쓴다
+  else if (header && same(location.text, header.location) && !location.uncertain && (lotNumber.text === null || lotNumber.uncertain)) lotNumber = v(header.lot, false);
   let area: OcrValue = v(null, false);
   if (kind === "plainLand") {
     for (const line of row) {
@@ -440,7 +469,15 @@ function parsePlainProperty(kind: "plainBuilding" | "plainLand", section: ParseL
     for (const line of row) {
       for (const c of cells(line.text)) {
         const f = FLOOR_AREA_RE.exec(c);
-        if (f) floors.push({ text: `${compact(f[1])} ${f[2]}㎡`, uncertain: f[3] !== "㎡" || valueConfidence(line, f[2]) < confMin });
+        if (f) {
+          floors.push({ text: `${compact(f[1])} ${f[2]}㎡`, uncertain: f[3] !== "㎡" || valueConfidence(line, f[2]) < confMin });
+          continue;
+        }
+        for (const g of fixFloor(c).matchAll(FLOOR_AREAS_RE)) {
+          // "층"을 다른 글자로 읽은 층("2흥 76.47㎡")도 층으로 넣되 확신 없음으로 둔다
+          const label = compact(g[1]);
+          floors.push({ text: `${label.replace(/[가-힣]$/, "층")} ${g[2]}㎡`, uncertain: !label.endsWith("층") || g[3] !== "㎡" || valueConfidence(line, g[2]) < confMin });
+        }
       }
     }
     if (floors.length) area = { text: floors.map((f) => f.text).join(", "), uncertain: floors.some((f) => f.uncertain) };
@@ -499,7 +536,7 @@ function parseOneRegistry(lines: ParseLine[], confMin: number): RegistryRead {
   const titles = new Set([...bySection.building, ...bySection.land, ...bySection.unit, ...bySection.landRight, ...bySection.plainBuilding, ...bySection.plainLand]);
   const rest = lines.filter((l) => !titles.has(l));
   // 토지·일반건물 등기부: 표제부 하나 = 부동산 하나
-  const plain = (["plainBuilding", "plainLand"] as const).flatMap((k) => (bySection[k].length ? [parsePlainProperty(k, bySection[k], confMin)] : [])).filter((p) => p !== null);
+  const plain = (["plainBuilding", "plainLand"] as const).flatMap((k) => (bySection[k].length ? [parsePlainProperty(k, bySection[k], confMin, headerAddress(lines, confMin))] : [])).filter((p) => p !== null);
   if (plain.length && !bySection.unit.length) {
     return { properties: plain, owners: parseOwners(bySection.gap, confMin), mortgages: parseMortgages(rest, confMin) };
   }
