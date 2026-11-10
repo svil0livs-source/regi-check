@@ -195,9 +195,14 @@ class PrepareFailed extends Error {
   }
 }
 
-/** 이어서 처리할 때 같은 파일인지 알아보는 값 (등기부 PDF가 여러 개면 모두, 2026-11-09) */
+/**
+ * 이어서 처리할 때 같은 파일인지 알아보는 값 (등기부 PDF가 여러 개면 모두, 2026-11-09).
+ * 배포본 표시도 넣는다: 읽기를 고쳐 새로 배포한 뒤 같은 폴더를 올리면 예전 결과를 다시 쓰지 않고 새로 검증한다 (2026-11-10).
+ */
 const signatureOf = (hwp: File | undefined, pdfs: (File | undefined)[]) =>
-  hwp && pdfs.length && pdfs.every(Boolean) ? [`${hwp.size}:${hwp.lastModified}`, ...pdfs.map((p) => `${p!.size}:${p!.lastModified}`)].join("|") : "";
+  hwp && pdfs.length && pdfs.every(Boolean)
+    ? [`${hwp.size}:${hwp.lastModified}`, ...pdfs.map((p) => `${p!.size}:${p!.lastModified}`), `v${process.env.NEXT_PUBLIC_BUILD_STAMP ?? ""}`].join("|")
+    : "";
 
 const NAV_LINKS: NavLink[] = [
   { id: "history", label: "이전 결과" },
