@@ -113,14 +113,12 @@ export function compareField(
 
   if (hwpComparable !== registryComparable) return { ...base, status: "mismatch" };
 
-  // 호수 앞의 동: 한글 서류에 동이 있으면 등기부의 동(1동의 건물 이름)과도 같아야 일치 (2026-11-09)
+  // 호수 앞의 동: 두 문서 모두에 동이 있으면 같아야 일치 (2026-11-09).
+  // 어느 한쪽에 동이 없으면 층·호만 같으면 일치 (2026-11-10 사용자 결정: 「동이 없어도 호수 같으면 일치」)
   if (kind === "unitNumber") {
     const hwpDong = splitUnitDong(normalizeUnitNumber(hwp.value)).dong;
     const regDong = splitUnitDong(normalizeUnitNumber(registry.value)).dong;
-    if (hwpDong !== null && regDong === null) {
-      return { ...base, status: "needs_review", reason: "층·호는 같지만, 등기부등본에서 동(1동의 건물 이름)을 읽지 못해 동은 직접 확인이 필요합니다." };
-    }
-    if (hwpDong !== null && hwpDong !== regDong) return { ...base, status: "mismatch", reason: "동이 다릅니다." };
+    if (hwpDong !== null && regDong !== null && hwpDong !== regDong) return { ...base, status: "mismatch", reason: "동이 다릅니다." };
   }
 
   return { ...base, status: "match" };

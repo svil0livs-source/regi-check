@@ -141,9 +141,9 @@ describe("compareField: 호수 앞의 동 (2026-11-09 사용자 결정)", () => 
   it("층·호가 다르면 동과 관계없이 불일치", () => {
     expect(compareField("unitNumber", v("제110동 제13층 제1301호"), v("제110동 제13층 제1310호")).status).toBe("mismatch");
   });
-  it("등기부에서 동을 읽지 못했으면 확인 필요", () => {
-    const r = compareField("unitNumber", v("제110동 제13층 제1301호"), v("제13층 제1301호"));
-    expect(r.status).toBe("needs_review");
+  it("등기부에 동이 없어도(읽지 못함 포함) 층·호가 같으면 일치 (2026-11-10 사용자 결정)", () => {
+    expect(compareField("unitNumber", v("제110동 제13층 제1301호"), v("제13층 제1301호")).status).toBe("match");
+    expect(compareField("unitNumber", v("제110동 제13층 제1301호"), v("제13층 제1310호")).status).toBe("mismatch");
   });
   it("한글 서류에 동이 없으면 층·호만 대조", () => {
     expect(compareField("unitNumber", v("제13층 제1301호"), v("제110동 제13층 제1301호")).status).toBe("match");
