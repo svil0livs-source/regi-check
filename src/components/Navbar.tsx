@@ -1,9 +1,8 @@
 "use client";
-// 떠 있는 유리 네비게이션 바. 문서의 Sign Up/Login 자리에는 이 도구에 맞는 버튼(새 검증 시작)을 둔다.
+// 위쪽 메뉴 줄: 왼쪽 「메뉴」(왼쪽에서 미끄러져 나오는 창), 가운데 REGI-CHECK(첫 화면으로), 오른쪽 점 + 버튼. (디자인 문서, 2026-11-13)
 import Link from "next/link";
-import { useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { FileCheck2, Menu, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowIcon } from "@/components/ChamferButton";
 
 export interface NavLink {
   id: string;
@@ -13,120 +12,95 @@ export interface NavLink {
 interface Props {
   links: NavLink[];
   onLink: (id: string) => void;
-  /** 오른쪽 버튼 (보이지 않게 하려면 null) */
-  action: { label: string; onClick: () => void } | null;
-  /** 왼쪽 위 REGI-CHECK를 누르면 첫 화면으로 */
+  /** 오른쪽 버튼 */
+  action: { label: string; onClick: () => void };
+  /** 가운데 REGI-CHECK를 누르면 첫 화면으로 */
   onHome: () => void;
 }
 
+const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+
 export default function Navbar({ links, onLink, action, onHome }: Props) {
   const [open, setOpen] = useState(false);
-  const reduce = useReducedMotion();
+  const openRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  /** 메뉴를 열고 닫는 한 곳: 열면 「닫기」로, 닫으면 「메뉴」로 초점을 옮긴다 */
+  const setMenu = useCallback((next: boolean) => {
+    setOpen(next);
+    // 숨겨진 동안에는 초점을 받을 수 없어서 화면이 바뀐 다음에 옮긴다
+    requestAnimationFrame(() => (next ? closeRef : openRef).current?.focus({ preventScroll: true }));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, setMenu]);
 
   return (
-    <motion.header
-      initial={reduce ? false : { y: -20, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-      className="relative z-20 w-full px-4 py-4 sm:px-6 sm:py-6"
-    >
-      <nav aria-label="주 메뉴" className="liquid-glass mx-auto flex max-w-5xl items-center justify-between rounded-full px-5 py-3 sm:px-6">
-        <div className="flex items-center gap-8">
-          <Link
-            href="/"
-            className="flex items-center gap-2 rounded-full"
-            aria-label="REGI-CHECK 처음 화면"
-            onClick={(e) => {
-              // 같은 주소라 이동이 일어나지 않으므로 화면 상태를 직접 첫 화면으로 되돌린다
-              e.preventDefault();
-              setOpen(false);
-              onHome();
-            }}
-          >
-            <FileCheck2 size={24} className="text-white" aria-hidden />
-            <span className="flex flex-col leading-none">
-              <span className="text-lg font-bold tracking-wide text-white">REGI-CHECK</span>
-              <span className="mt-1 text-[7px] font-medium tracking-[0.1em] text-white/70 sm:text-[8px] sm:tracking-[0.14em]">
-                REAL ESTATE REGISTRATION DOCUMENT CHECK
-              </span>
-            </span>
-          </Link>
-          <ul className="hidden items-center gap-8 md:flex">
-            {links.map((l) => (
-              <li key={l.id}>
-                <button
-                  onClick={() => onLink(l.id)}
-                  className="rounded text-sm font-medium text-white/80 transition-colors duration-300 hover:text-white"
-                >
-                  {l.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+    <>
+      <nav className="nav" aria-label="주 메뉴">
+        <button ref={openRef} id="menu-open" className="nav__item" aria-expanded={open} aria-controls="menu" aria-label="메뉴 열기" onClick={() => setMenu(true)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+            <path d="M4 6h16" />
+            <path d="M4 12h16" />
+            <path d="M4 18h16" />
+          </svg>
+          <span className="nav__label nav__label--menu">메뉴</span>
+        </button>
 
-        <div className="flex items-center gap-2">
-          {action && (
-            <button
-              onClick={action.onClick}
-              className="liquid-glass hidden rounded-full px-6 py-2 text-sm font-medium text-white transition-opacity duration-300 hover:opacity-80 sm:block"
-            >
-              {action.label}
-            </button>
-          )}
-          <button
-            className="rounded-full p-2 text-white md:hidden"
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            aria-controls="mobile-menu"
-            aria-label={open ? "메뉴 닫기" : "메뉴 열기"}
-          >
-            {open ? <X size={22} /> : <Menu size={22} />}
-          </button>
-        </div>
+        <Link
+          href="/"
+          className="nav__brand"
+          aria-label="REGI-CHECK 처음 화면"
+          onClick={(e) => {
+            // 같은 주소라 이동이 일어나지 않으므로 화면 상태를 직접 첫 화면으로 되돌린다
+            e.preventDefault();
+            onHome();
+          }}
+        >
+          REGI-CHECK
+        </Link>
+
+        <button className="nav__item" onClick={action.onClick}>
+          <span className="nav__dot" aria-hidden="true" />
+          <span className="nav__label">{action.label}</span>
+        </button>
       </nav>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            id="mobile-menu"
-            initial={reduce ? false : { opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="liquid-glass glass-pill mx-auto mt-3 max-w-5xl !rounded-3xl p-3 md:hidden"
-          >
-            <ul className="flex flex-col">
-              {links.map((l) => (
-                <li key={l.id}>
-                  <button
-                    onClick={() => {
-                      setOpen(false);
-                      onLink(l.id);
-                    }}
-                    className="w-full rounded-2xl px-4 py-3 text-left text-sm font-medium text-white/90 hover:bg-white/5"
-                  >
-                    {l.label}
-                  </button>
-                </li>
-              ))}
-              {action && (
-                <li>
-                  <button
-                    onClick={() => {
-                      setOpen(false);
-                      action.onClick();
-                    }}
-                    className="w-full rounded-2xl px-4 py-3 text-left text-sm font-medium text-white hover:bg-white/5"
-                  >
-                    {action.label}
-                  </button>
-                </li>
-              )}
-            </ul>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.header>
+      <div id="menu" className={`menu ${open ? "is-open" : ""}`} role="dialog" aria-modal="true" aria-label="메뉴">
+        <div className="menu__backdrop" onClick={() => setMenu(false)} />
+        <div className="menu__panel">
+          <button ref={closeRef} className="menu__close" onClick={() => setMenu(false)}>
+            <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+            닫기
+          </button>
+          <div className="menu__nav">
+            {links.map((l) => (
+              <button
+                key={l.id}
+                className="menu__link"
+                onClick={() => {
+                  setMenu(false);
+                  onLink(l.id);
+                }}
+              >
+                <span className="menu__linkText">{l.label}</span>
+                <ArrowIcon className="menu__arrow icon" />
+              </button>
+            ))}
+          </div>
+          <div className="menu__foot">
+            <span className="menu__footLabel">REGI-CHECK · REAL ESTATE REGISTRATION DOCUMENT CHECK</span>
+            <span className="menu__mail break-keep">한국자산관리공사 서울동부지역본부 유주연 차장</span>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
