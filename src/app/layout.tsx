@@ -3,7 +3,8 @@ import { Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
 
 // 한글용 (디자인 문서의 Helvetica Neue Light에는 한글이 없다). 글자 수가 많아 미리 불러오지 않고 쓸 때 조각으로 받는다.
-const notoSansKr = Noto_Sans_KR({ variable: "--font-noto-sans-kr", subsets: ["latin"], weight: ["300", "400", "500", "600"], preload: false });
+// 굵기를 하나씩 나눠 적으면 일부 글자만 굵게 나오는 일이 있어, 굵기 전체를 한 벌(가변 글꼴)로 받는다 (2026-11-13).
+const notoSansKr = Noto_Sans_KR({ variable: "--font-noto-sans-kr", subsets: ["latin"], preload: false });
 
 export const metadata: Metadata = {
   title: "근이전 신청서류 정합성 자동검증 시스템",

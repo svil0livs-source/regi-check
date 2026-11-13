@@ -4,8 +4,9 @@
    밝은 영상 배경 + 검은 글자 + 굴절 유리 카드. 문서의 CSS 값은 그대로 옮겼다. */
 
 @theme inline {
-  /* Helvetica Neue에는 한글이 없어서 한글은 Noto Sans KR로 이어 붙인다 */
-  --font-sans: "Helvetica Neue Light", "Helvetica Neue", Helvetica, Arial, var(--font-noto-sans-kr), "Pretendard", "Malgun Gothic", sans-serif;
+  /* Helvetica Neue에는 한글이 없어서 한글은 Noto Sans KR로 이어 붙인다.
+     한글 글꼴을 PC에 깔린 글꼴(Helvetica·Arial)보다 앞에 둔다: 뒤에 두면 일부 한글 글자가 PC의 다른 글꼴로 그려져 굵기가 들쭉날쭉해진다 (2026-11-13). */
+  --font-sans: "Helvetica Neue Light", var(--font-noto-sans-kr), "Helvetica Neue", Helvetica, Arial, "Pretendard", "Malgun Gothic", sans-serif;
 }
 
 :root {
