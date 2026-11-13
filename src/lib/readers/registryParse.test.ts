@@ -357,3 +357,47 @@ describe("parseRegistryLines: 토지 머리줄 소재지", () => {
     expect(parseRegistryLines(land("1  2001년3월2일  경기도 가상시 니라동 123-4  대  82㎡", [], 1)).properties[0].location).toEqual({ text: "경기도 가상시 니라동", uncertain: false });
   });
 });
+
+// ── 말소사항 포함 집합건물 스캔본 (2026-11-13 실제 스캔본 모양, 값은 가짜) ──
+describe("parseRegistryLines: 집합건물 스캔본 보완 (2026-11-13)", () => {
+  const scan = (unitRow: string, eul: ParseLine[], eulTitle = "【 을  구 】  ( 소유권 이외의 권리에 관한 사항 )"): ParseLine[] => [
+    L("[집합건물] 경기도 가상시 나라동 7 예시오피스텔 제8층 제씨-809호"),
+    L("【 표 제 부 】  ( 1동의 건물의 표시 )"),
+    L("표시번호  접 수  소재지번,건물명칭 및 번호  건 물 내 역  등기원인 및 기타사항"),
+    L("3  경기도 가상시 나라동 7 예시오피스텔  철근콘크리트구조 25층 업무시설"),
+    L("【 표 제 부 】  ( 전유부분의 건물의 표시 )"),
+    L("표시번호  접 수  건 물 번 호  건 물 내 역  등기원인 및 기타사항"),
+    L(unitRow),
+    L(eulTitle),
+    L("등기목적  접 수  등기원인  권리자 및 기타사항"),
+    ...eul,
+  ];
+  const mortgage = (purpose: string, amountLabel = "채권최고액", rank = "14  "): ParseLine[] => [
+    L(`${rank}${purpose}  2020년3월23일 제39585호  2020년3월23일 설정계약  ${amountLabel} 금272,800,000원`),
+    L("채무자 김가명"),
+    L("근저당권자 가나다보험주식회사"),
+    L("110111-1234567"),
+  ];
+  it("호수 숫자 앞에 글자가 붙은 건물번호(제씨-809호)를 읽는다", () => {
+    const p = parseRegistryLines(scan("1  2004년4월23일  제8층 제씨-809호  철근콘크리트구조 80㎡  도면편철장 제1책", [])).properties[0];
+    expect(p.unitNumber).toEqual({ text: "제8층 제씨-809호", uncertain: false });
+    expect(p.area).toEqual({ text: "80㎡", uncertain: false });
+  });
+  it("소수 넷째 자리까지 있는 전유 면적은 단위까지 읽었으면 믿고, 셋째 자리까지면 확신하지 않는다", () => {
+    const area = (a: string) => parseRegistryLines(scan(`1  2010년4월8일  제8층 제809호  철근콘크리트구조 ${a}  전산도면번호`, [])).properties[0].area;
+    expect(area("84.9457㎡")).toEqual({ text: "84.9457㎡", uncertain: false });
+    expect(area("114.621㎡")).toEqual({ text: "114.621㎡", uncertain: true });
+    expect(area("84.9457")).toEqual({ text: "84.9457㎡", uncertain: true });
+  });
+  it("순위번호도 「근」도 가려져 줄이 「저당권설정」으로 시작해도 채권최고액이 있으면 근저당권으로 본다", () => {
+    const m = parseRegistryLines(scan("1  2010년4월8일  제8층 제809호  철근콘크리트구조 80㎡", mortgage("'저당권설정", "채권최고액", ""))).mortgages;
+    expect(m.map((x) => [x.rank, x.receiptNumber.text, x.debtors[0]?.text])).toEqual([["", "제39585호", "김가명"]]);
+  });
+  it("채권최고액이 없는 「저당권설정」은 근저당권으로 보지 않는다", () => {
+    expect(parseRegistryLines(scan("1  2010년4월8일  제8층 제809호  철근콘크리트구조 80㎡", mortgage("저당권설정", "채권액", ""))).mortgages).toEqual([]);
+  });
+  it("을구 제목을 못 읽어도 「권리자 및 기타사항」 머리줄 뒤의 근저당권을 찾는다", () => {
+    const m = parseRegistryLines(scan("1  2010년4월8일  제8층 제809호  철근콘크리트구조 80㎡", mortgage("근저당권설정"), "[ 을 :『 구 그 (낙이이피의 원리아한 사항/)")).mortgages;
+    expect(m.map((x) => x.rank)).toEqual(["14"]);
+  });
+});

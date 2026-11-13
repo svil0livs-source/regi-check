@@ -65,6 +65,9 @@ function sectionOf(line: ParseLine): Section | null {
   if (fuzzyIncludes(t, "소유권에관한사항")) return "gap";
   // 갑구·을구 표의 머리줄. 구 제목을 잘못 읽어도 표제부에서 벗어났음을 안다 (표제부 표는 「표시번호」로 시작)
   if (/^순위번호/.test(t) || fuzzyIncludes(t.slice(0, 6), "순위번호")) return "gap";
+  // 스캔본은 순위번호 칸을 숫자로만 읽어 머리줄에 「순위번호」가 없다. 갑구·을구 표에만 있는 「권리자 및 기타사항」으로 안다
+  // (표제부 표는 「등기원인 및 기타사항」. 「열람용」 글자가 구 제목을 덮어 제목을 못 읽은 일이 있었다, 2026-11-13 실제 스캔본)
+  if (fuzzyIncludes(t, "권리자및기타사항") && t.length <= 30) return "gap";
   return null;
 }
 
@@ -74,7 +77,8 @@ const RECEIPT_RE = /제\s*([\d/ ]{3,})\s*호/;
 const ID_RE = /[\d/]{6}\s*-\s*[\d*/]{5,}/;
 const ADDRESS_LOT_RE = /(\S*(?:특별시|광역시|특별자치시|특별자치도|도)\s+(?:\S+\s+){0,3}?\S+[동리가])\s+(\d+(?:-\d+)?)(?=\s|$)/;
 // "층"은 "충·중·증"으로 잘못 읽히기 쉽다. 숫자 뒤 "층" 자리 글자이므로 같은 것으로 보고 "층"으로 적는다
-const UNIT_RE = /(제\s*\d+\s*[층충중증]\s*제\s*\d+\s*)(\S)/;
+// 호수 숫자 앞에 글자가 붙기도 한다 (예: "제8층 제씨-809호", 2026-11-13 실제 서류)
+const UNIT_RE = /(제\s*\d+\s*[층충중증]\s*제\s*(?:[가-힣A-Za-z]{1,3}\s*-\s*)?\d+\s*)(\S)/;
 const fixFloor = (s: string) => s.replace(/(\d\s*)[충중증]/g, "$1층");
 // 칸 제목: 글자 하나가 잘못 읽혀도 찾는다 (예: 근저탕권자, 재무자)
 // (근저당권자의 '근'이 '그'로 읽히거나 빠지는 경우도 있다. 값이 아니라 칸 제목만 느슨하게 찾는다)
@@ -287,6 +291,13 @@ function parseMortgages(lines: ParseLine[], confMin: number): RegistryMortgage[]
   const isKnown = (l: ParseLine) => !isLabelLine(l) && (isCancel(l) || isChange(l) || isTransfer(l) || isMortgage(l));
   for (const block of blocks(lines, (l) => isKnown(l) || isOtherRow(l))) {
     const first = block[0];
+    // 손으로 그린 동그라미가 「근」을 가려 "저당권설정"만 읽히기도 한다 (2026-11-13 실제 스캔본).
+    // 저당권(채권액)과 달리 근저당권에만 있는 「채권최고액」이 같은 묶음에 있을 때만 근저당권설정으로 본다
+    const hiddenGeun = !isKnown(first) && !isLabelLine(first) && letters(first.text).includes("저당권설정") && !/\d\s*번/.test(first.text) && amountValue(block, confMin).text !== null;
+    if (hiddenGeun) {
+      mortgages.push(parseMortgageBlock(block, confMin));
+      continue;
+    }
     if (!isKnown(first)) continue;
     if (isCancel(first)) {
       // 한 줄에 여러 근저당권을 말소하기도 한다 ("1번(1)근저당권설정, 2번(2)근저당권설정 등기말소")
@@ -345,7 +356,8 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
         unitNumber: unitOk ? v(unitText, valueConfidence(line, compact(u[1])) < confMin) : v(unitText, true),
         // 면적 단위 기호(㎡)는 'ㅁ', 'ㅠ'로 잘못 읽히기 쉬워 숫자만 쓰고 단위는 ㎡로 적는다
         // 소수 셋째 자리가 있으면 ㎡의 m을 숫자 1로 읽어 붙였을 수 있다 (예: 114.62㎡ → "114.621"). 고치지 않고 확신하지 않는다
-        area: area ? { text: `${area[1]}㎡`, uncertain: !areaUnitOk || /\.\s*\d{3,}/.test(area[1]) || valueConfidence(line, area[1]) < confMin } : v(null, false),
+        // 소수 넷째 자리까지 적는 면적도 있다 (예: 84.9457㎡, 2026-11-13 실제 스캔본): 단위 기호까지 읽었으면 넷째 자리는 그대로 믿는다
+        area: area ? { text: `${area[1]}㎡`, uncertain: !areaUnitOk || /\.\s*\d{3}(?!\d)/.test(area[1]) || /\.\s*\d{5,}/.test(area[1]) || valueConfidence(line, area[1]) < confMin } : v(null, false),
       },
     ];
   });
