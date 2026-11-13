@@ -112,13 +112,14 @@ body {
   border-radius: 9999px;
   background: #000;
 }
+/* 사이트 이름: 굵게, 휴대폰 20px · PC 30px (2026-11-13 사용자 요청).
+   Light 글꼴에는 굵은 글자가 없어서 PC에 깔린 Helvetica·Arial의 진짜 굵은 글자를 쓴다. */
 .nav__brand {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 1rem;
-  font-weight: 500;
-  letter-spacing: 0.16em;
+  margin: 0 auto 0 0.75rem;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   white-space: nowrap;
   color: #000;
   transition: opacity 300ms;
@@ -127,7 +128,15 @@ body {
 @media (min-width: 640px) {
   .nav { padding: 1.25rem 1.5rem; }
   .nav__label--menu { display: inline; }
-  .nav__brand { font-size: 1.5rem; letter-spacing: 0.18em; }
+  /* 넓은 화면에서는 가운데에 둔다 (좁은 화면에서는 오른쪽 버튼과 겹치지 않게 「메뉴」 옆) */
+  .nav__brand {
+    position: absolute;
+    left: 50%;
+    margin: 0;
+    transform: translateX(-50%);
+    font-size: 30px;
+    letter-spacing: 0.12em;
+  }
 }
 @media (min-width: 768px) {
   .nav { padding: 1.5rem 3rem; }
