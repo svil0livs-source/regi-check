@@ -89,6 +89,28 @@ body {
   -webkit-backdrop-filter: blur(22px) saturate(160%);
 }
 
+/* ── 오로라 배경: 빛 덩어리가 천천히 떠다닌다 (AuroraBackground.tsx) ───────── */
+.aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+}
+.aurora-a { animation: aurora-a 26s ease-in-out infinite alternate; }
+.aurora-b { animation: aurora-b 32s ease-in-out infinite alternate; }
+.aurora-c { animation: aurora-c 22s ease-in-out infinite alternate; }
+@keyframes aurora-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-14vw, 10vh, 0) scale(1.15); }
+}
+@keyframes aurora-b {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(16vw, -12vh, 0) scale(1.1); }
+}
+@keyframes aurora-c {
+  from { transform: translate3d(0, 0, 0) scale(0.95); }
+  to { transform: translate3d(-10vw, -14vh, 0) scale(1.2); }
+}
+
 /* 움직임을 줄이도록 설정한 사용자에게는 애니메이션을 멈춘다 */
 @media (prefers-reduced-motion: reduce) {
   *,

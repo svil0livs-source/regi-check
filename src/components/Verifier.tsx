@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import BackgroundVideo from "@/components/BackgroundVideo";
+import AuroraBackground from "@/components/AuroraBackground";
 import Hero from "@/components/Hero";
 import InfoModal, { type InfoTopic } from "@/components/InfoModal";
 import Navbar, { type NavLink } from "@/components/Navbar";
@@ -407,7 +407,7 @@ export default function Verifier() {
         await accept(picked);
       }}
     >
-      <BackgroundVideo />
+      <AuroraBackground />
       {/* 폴더를 끌고 오면 화면 전체에 놓을 자리를 보여 준다 */}
       {dragging && !uploadOpen && (
         <div

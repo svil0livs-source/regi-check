@@ -130,7 +130,8 @@ export async function readTablePage(
     }
     // 등기목적·접수 칸 글자가 둘 다 모두 취소선이면 말소된 등기라 줄 전체를 버린다.
     // (순위번호 칸은 보지 않는다: 손으로 그린 동그라미·체크가 취소선처럼 보일 수 있다)
-    if (read[1]?.allStruck && read[2]?.allStruck) continue;
+    // 갑구·을구 표는 등기목적·접수·등기원인 세 칸 가운데 두 칸이 모두 취소선이면 버린다: 손글씨 자국 때문에 등기목적 칸의 취소선만 놓친 줄이 있었다 (2026-11-13 실제 스캔본)
+    if (rankCol ? [read[1], read[2], read[3]].filter((r) => r?.allStruck).length >= 2 : read[1]?.allStruck && read[2]?.allStruck) continue;
     for (const r of read) await fixAreas(page, gray, r, opts, signal);
     for (const [k, r] of read.entries()) if (!(rankCol && k === 0)) await confirmWeakWords(page, gray, r, signal);
     out.push(...joinCells(read.map((r) => r.lines)));
@@ -158,6 +159,17 @@ async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortS
   // 두 번 다 실패했을 때만, 옅은 회색(130보다 밝은 점)을 흰색으로 날린 흑백 사진으로 한 번 더 읽는다. 인쇄 숫자는 그보다 진해서 남는다.
   const c = await readBox(page, gray, box, { ...fixed, prep: "bin", threshold: 130 }, signal, true, true, 1);
   if (ok(c)) return c;
+  // 볼펜 동그라미 안의 숫자는 두 크기 모두 같은 숫자로 읽고도 확신도가 0으로 나왔다 (지운 자국이 칸 가장자리에 남아서, 2026-11-13 실제 스캔본).
+  // 두 읽기가 같은 순위번호일 때만, 인쇄 숫자(진한 점) 둘레만 좁게 잘라 다시 읽어 같은 숫자가 확신 있게(80 이상) 나오면 쓴다.
+  if (/^\d+(-\d+)?$/.test(num(a)) && num(a) === num(b)) {
+    const tight = printBox(gray, box);
+    if (tight) {
+      for (const zoom of [2, 3, 1]) {
+        const t = await readBox(page, gray, tight, { ...fixed, psm: "7" }, signal, true, true, zoom);
+        if (num(t) === num(a) && conf(t) >= 80) return { ...t, allStruck: false };
+      }
+    }
+  }
   // 손글씨를 지운 사진에서 글자를 아예 못 찾는 칸이 있었다 (숫자 "1" 하나뿐인 칸, 2026-11-10 실제 스캔본).
   // 세 번 다 글자가 없을 때만, 지우지 않은 원래 사진을 원래 크기와 2배로 읽어 둘이 같은 순위번호이고 한쪽은 확신(80 이상), 다른 쪽도 60 이상이면 쓴다.
   if (!a.lines.length && !b.lines.length && !c.lines.length) {
@@ -166,6 +178,52 @@ async function readRank(page: Buffer, gray: GrayImage, box: Box, signal?: AbortS
     if (/^\d+(-\d+)?$/.test(num(d)) && num(d) === num(e) && Math.max(conf(d), conf(e)) >= 80 && Math.min(conf(d), conf(e)) >= 60) return conf(d) >= conf(e) ? d : e;
   }
   return { lines: [], allStruck: a.allStruck && b.allStruck, toPage: b.toPage };
+}
+
+/**
+ * 칸 안에서 인쇄 숫자 크기의 진한 덩어리(밝기 110 미만, 높이가 글자만 한 것)들을 둘러싼 상자에 여백을 둔 것. 없으면 null.
+ * 손글씨를 지운 사진에서 찾는다: 볼펜 선의 진한 점은 작은 조각으로만 남아 글자 크기 덩어리가 되지 못한다.
+ */
+function printBox(gray: GrayImage, box: Box): Box | null {
+  const w = box.x1 - box.x0, h = box.y1 - box.y0;
+  const img = withoutHandwriting(gray, box, true);
+  const unit = gray.width / 2480;
+  const seen = new Uint8Array(w * h);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  const stack: number[] = [];
+  // 칸 테두리 선을 피하려고 가장자리 4점은 보지 않는다
+  const inside = (x: number, y: number) => x >= 4 && y >= 4 && x < w - 4 && y < h - 4;
+  for (let sy = 4; sy < h - 4; sy++) for (let sx = 4; sx < w - 4; sx++) {
+    const start = sy * w + sx;
+    if (seen[start] || img[start] >= 110) continue;
+    let bx0 = sx, by0 = sy, bx1 = sx, by1 = sy;
+    seen[start] = 1;
+    stack.push(start);
+    while (stack.length) {
+      const p = stack.pop()!;
+      const px = p % w, py = (p - px) / w;
+      if (px < bx0) bx0 = px;
+      if (px > bx1) bx1 = px;
+      if (py < by0) by0 = py;
+      if (py > by1) by1 = py;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = px + dx, ny = py + dy, q = ny * w + nx;
+        if (inside(nx, ny) && !seen[q] && img[q] < 110) {
+          seen[q] = 1;
+          stack.push(q);
+        }
+      }
+    }
+    const bh = by1 - by0 + 1, bw = bx1 - bx0 + 1;
+    // 300dpi에서 인쇄 숫자는 높이 25~32점쯤, 폭은 높이를 넘지 않는다
+    if (bh < 18 * unit || bh > 45 * unit || bw > 40 * unit) continue;
+    if (bx0 < x0) x0 = bx0;
+    if (bx1 > x1) x1 = bx1;
+    if (by0 < y0) y0 = by0;
+    if (by1 > y1) y1 = by1;
+  }
+  if (x1 < 0) return null;
+  return { x0: box.x0 + Math.max(0, x0 - 12), y0: box.y0 + Math.max(0, y0 - 10), x1: box.x0 + Math.min(w, x1 + 13), y1: box.y0 + Math.min(h, y1 + 11) };
 }
 
 /**
@@ -183,7 +241,10 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
   if (!landArea && (r.lines.length > 5 || !/조/.test(all))) return;
   for (const line of r.lines) {
     // "114 .621'"처럼 숫자가 여러 단어로 쪼개질 수 있다: 숫자로 시작하는 첫 단어부터 줄 끝까지를 면적 자리로 본다
-    if (!landArea && !/\d\s*\.\s*\d/.test(line.text)) continue;
+    // 전유 면적이 소수점 없는 숫자뿐인 줄("80㎡"를 "8011"로 읽음, 2026-11-13 실제 스캔본)은 토지 면적 칸처럼 여러 크기로 읽어 확인한다
+    const wholeLine = !landArea && /^\s*\d[\d,]*\s*\S{0,3}\s*$/.test(line.text);
+    const whole = landArea || wholeLine;
+    if (!whole && !/\d\s*\.\s*\d/.test(line.text)) continue;
     // 일반건물 층별 면적 줄("1층 72.74㎡")은 층 번호가 아니라 면적 숫자부터 본다 (2026-11-10 실제 스캔본: 층 번호를 면적에 붙여 "172.74㎡"로 만들었다)
     const floorLabel = (k: number) => /^\d+\s*[층충중증]/.test(line.words[k].text) || (/^\d+$/.test(line.words[k].text) && /^[층충중증]/.test(line.words[k + 1]?.text ?? ""));
     const i = line.words.findIndex((w, k) => /^\d/.test(w.text) && !floorLabel(k));
@@ -197,7 +258,7 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
     // 층 이름 글자의 끝 조각이 숫자 상자에 걸려 들어오면 없는 숫자로 읽힌다("지1층 122.83"을 "1122.83"으로):
     // 자르는 자리 앞 덩어리들 가운데 낱말 사이만큼 벌어진 틈이 있으면 그 틈 뒤부터 읽는다 (2026-11-10 실제 스캔본)
     let left = pad.x0;
-    if (!landArea) {
+    if (!whole) {
       const before = glyphs(gray, { ...pad, x1: cuts[0] - 2 });
       // 낱말 사이 틈: 13점 이상이고, 숫자 사이 틈(가운데값)의 2배가 넘는 것 (300dpi에서 숫자 사이는 3~9점, 낱말 사이는 15점쯤)
       const gaps = before.slice(1).map((g, k) => g.x0 - before[k].x1);
@@ -224,10 +285,11 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
     // 토지 면적 칸: ㎡의 m을 숫자 하나로 읽어 「2101"」이 되므로, 처음 읽은 숫자의 앞부분(많아야 한 자리 짧은 것)이어야 한다
     const fits = (n: string) =>
       (/^\d[\d,]*\.\d+$/.test(n) && first.startsWith(n) && (n === first || decimals(n) >= 2)) ||
-      (landArea && /^\d[\d,]*$/.test(n) && first.startsWith(n) && first.length - n.length <= 1);
+      // 전유 면적 줄은 ㎡ 전체를 숫자 두 개로 읽기도 한다("8011")
+      (whole && /^\d[\d,]*$/.test(n) && first.startsWith(n) && first.length - n.length <= (wholeLine ? 2 : 1));
     let got: { num: string; conf: number } | null = null;
     for (const cut of cuts) {
-      if (landArea && !/\./.test(first)) {
+      if (whole && !/\./.test(first)) {
         // 소수점 없는 면적은 끝 숫자가 잘렸는지 숫자 모양으로 알 수 없다: 여러 크기로 읽어, 처음 숫자와 맞고 확신 있는 같은 읽기가 2번 이상일 때만 쓴다
         const reads: { num: string; conf: number }[] = [];
         // 두 자리 면적("82㎡")은 한 줄 읽기가 크기마다 다른 숫자를 냈고, 낱말 하나로 3~4배 키워 읽으면 늘 같았다 (2026-11-10 실제 스캔본)
@@ -253,7 +315,7 @@ async function fixAreas(page: Buffer, gray: GrayImage, r: BoxRead, opts: Recogni
       if (got) break;
       // 처음 읽기가 앞에 없는 숫자를 붙였으면("122.83"을 "1122.83"으로) 앞부분 맞추기로는 못 고친다:
       // 낱말 하나로 크게 두 번 읽어 둘 다 확신 있게 같은 값이고, 그 값이 처음 읽은 숫자 안에 그대로 들어 있을 때만 쓴다 (2026-11-10 실제 스캔본)
-      if (!landArea) {
+      if (!whole) {
         // 숫자 덩어리 수(줄 높이의 0.6배가 넘는 덩어리)와 읽은 숫자 수가 같아야 한다: 없는 숫자를 지어낸 읽기를 거른다
         const tall = glyphs(gray, { ...pad, x0: left, x1: cut - 2 }).filter((g) => g.y1 - g.y0 > (pad.y1 - pad.y0 - 12) * 0.6).length;
         // 숫자만 잘라 읽으면 틀리는 줄도, 줄 처음(층 이름)부터 단위 앞까지 함께 읽으면 맞게 읽혔다 ("층 122.83"): 줄째로 읽어 끝의 숫자를 쓴다
