@@ -52,12 +52,12 @@
 
 ### 3.0 시각 디자인 (2026-11-05, 사용자 제공 "Cinematic Liquid Glass" 문서 적용)
 
-- **배경**: 검은 바탕 전체 화면에 계속 움직이는 보라·남색 액체 영상(Mux HLS 스트림). 영상은 모든 요소 뒤에 두고 어두운 막을 씌우지 않는다. Safari는 기본 HLS, 그 밖의 브라우저는 `hls.js`로 재생하고, 기본 재생이 실패하면 `hls.js`로 넘어간다. 영상이 안 나오면 은은한 보라·남색 대체 배경을 보여 준다. (`src/components/BackgroundVideo.tsx`)
+- **배경**: 짙은 남보라 바탕 전체 화면에 보라·남색·자주 빛 덩어리가 천천히 떠다니는 「오로라」. 사이트가 직접 그리는 CSS 배경이라 외부 서비스에 기대지 않는다(외부 영상이 안 나오는 일이 있어 2026-11-13 교체). 모든 요소 뒤에 두고 어두운 막을 씌우지 않는다. (`src/components/AuroraBackground.tsx`, `globals.css`의 `aurora-*`)
 - **글꼴**: 본문 Inter, 제목 Instrument Serif. Instrument Serif에는 한글이 없어 한글은 Noto Serif KR로 이어 붙인다. 한국어는 단어 단위로 줄을 바꾼다(`break-keep`).
 - **유리 효과**: `.liquid-glass`(테두리 빛), `.glass-pill`(알약), `.glass-panel`(결과 표용 어두운 유리). 표는 글자가 또렷이 읽혀야 해서 영상 위에서도 더 어둡게 깐다.
 - **첫 화면(히어로)**: 상단 떠 있는 유리 바(`Navbar`: 왼쪽 로고 REGI-CHECK, 이전 결과·검증 기준·개인정보, 작업 중일 때만 새 검증 시작) → 큰 세리프 제목(근이전 신청서류 정합성 자동검증 시스템) → 작은 설명(한 글자도 놓치지 않는 서류 대조) → 유리 알약 「폴더 선택」(누르면 업로드 창) → 「검증 기준 보기」 → (남은 결과가 있으면) 남은 결과 안내와 「이전 결과 보기」 → 맨 아래 소속·이름. 첫 화면은 스크롤 없이 한 화면에 맞는다. 결과 화면부터는 스크롤된다.
 - **문서와 다르게 한 것**: ASME 문구, 이메일 신청, 영상 데모, 가격 메뉴는 이 도구와 맞지 않아 넣지 않았다. 기술은 Vite 대신 Next.js를 유지한다(프로젝트 규칙).
-- **접근성**: 키보드 초점 표시, 메뉴·창에 aria 이름, Esc로 창 닫기, `prefers-reduced-motion`(움직임 줄이기)이면 영상을 아예 불러오지 않고 정지된 대체 배경을 보여 준다 (2026-11-05 보완).
+- **접근성**: 키보드 초점 표시, 메뉴·창에 aria 이름, Esc로 창 닫기, `prefers-reduced-motion`(움직임 줄이기)이면 배경 움직임을 멈춘다 (2026-11-05 보완).
 끌어다 놓기, 진행 표시, 불일치 항목 먼저 보이기는 PRD에 없는 편의 기능이다 (PLAN 범위 참고).
 
 ### 3.1 화면 1: 업로드
@@ -463,7 +463,7 @@ src/
 ├── app/
 │   ├── page.tsx                 # 화면 진입점 (Verifier)
 │   └── api/verify/route.ts      # 건 단위 처리 서버 기능 (maxDuration 300초)
-├── components/                  # Verifier(업로드·요약·상세·이전 결과), Hero, Navbar, UploadModal, InfoModal, BackgroundVideo
+├── components/                  # Verifier(업로드·요약·상세·이전 결과), Hero, Navbar, UploadModal, InfoModal, AuroraBackground
 ├── lib/
 │   ├── compare/                 # ★ 순수 함수: 정규화·비교·짝짓기·요약 판정
 │   ├── readers/                 # 한글 파일 읽기, PDF 페이지 사진 꺼내기, Tesseract 글자 읽기·표 해석·다수결, (선택) OpenAI 읽기

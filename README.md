@@ -33,7 +33,7 @@
 
 ## 기술 스택
 
-Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Vitest · Tesseract.js · sharp · hls.js · motion
+Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Vitest · Tesseract.js · sharp · motion
 
 배포는 Vercel을 사용합니다.
 
