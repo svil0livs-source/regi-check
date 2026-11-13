@@ -116,9 +116,10 @@ body {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.8125rem;
+  font-size: 1rem;
   font-weight: 500;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
   color: #000;
   transition: opacity 300ms;
 }
@@ -126,6 +127,7 @@ body {
 @media (min-width: 640px) {
   .nav { padding: 1.25rem 1.5rem; }
   .nav__label--menu { display: inline; }
+  .nav__brand { font-size: 1.5rem; letter-spacing: 0.18em; }
 }
 @media (min-width: 768px) {
   .nav { padding: 1.5rem 3rem; }
