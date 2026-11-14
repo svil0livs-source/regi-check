@@ -1,5 +1,5 @@
 "use client";
-// 「검증 기준」「개인정보」 안내 창 (유리 패널). Esc 또는 바깥을 눌러 닫는다.
+// 「검증 기준」「개인정보」 안내 창 (메뉴와 같은 종이색 판). Esc 또는 바깥을 눌러 닫는다.
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { X } from "lucide-react";
@@ -51,7 +51,7 @@ export default function InfoModal({ topic, onClose }: Props) {
     <AnimatePresence>
       {topic && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-[4px]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -62,7 +62,7 @@ export default function InfoModal({ topic, onClose }: Props) {
             role="dialog"
             aria-modal="true"
             aria-label={CONTENT[topic].title}
-            className="glass-panel liquid-glass relative w-full max-w-xl rounded-3xl p-7 text-white sm:p-9"
+            className="panel panel--solid w-full max-w-xl p-7 sm:p-10"
             initial={reduce ? false : { opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={reduce ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.97 }}
@@ -73,15 +73,15 @@ export default function InfoModal({ topic, onClose }: Props) {
               ref={closeRef}
               onClick={onClose}
               aria-label="닫기"
-              className="absolute right-5 top-5 rounded-full p-1.5 text-white/70 transition-colors hover:text-white"
+              className="absolute right-6 top-6 rounded-full p-1.5 text-black transition-opacity duration-300 hover:opacity-60"
             >
-              <X size={20} />
+              <X size={20} strokeWidth={1.5} />
             </button>
-            <h2 className="mb-5 font-serif text-3xl font-normal">{CONTENT[topic].title}</h2>
-            <ul className="space-y-3 break-keep text-sm leading-relaxed text-white/80">
+            <h2 className="display mb-6 border-b border-black/10 pb-4 text-3xl">{CONTENT[topic].title}</h2>
+            <ul className="space-y-3 break-keep text-sm leading-relaxed text-black/70">
               {CONTENT[topic].items.map((t) => (
                 <li key={t} className="flex gap-3">
-                  <span aria-hidden className="mt-2 h-1 w-1 flex-none rounded-full bg-white/60" />
+                  <span aria-hidden className="mt-2 h-1 w-1 flex-none rounded-full bg-black/50" />
                   <span>{t}</span>
                 </li>
               ))}

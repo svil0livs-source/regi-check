@@ -1,16 +1,18 @@
 @import "tailwindcss";
 
-/* 디자인 기준: 사용자가 준 "Cinematic Liquid Glass" 문서(2026-11-05)를 이 앱(Next.js)에 맞춰 적용 */
+/* 디자인 기준: 사용자가 준 "Terranova — Signals from the Deep Green" 문서(2026-11-13)를 이 앱(Next.js)에 맞춰 적용.
+   밝은 영상 배경 + 검은 글자 + 굴절 유리 카드. 문서의 CSS 값은 그대로 옮겼다. */
 
 @theme inline {
-  --font-sans: var(--font-inter), "Pretendard", "Malgun Gothic", ui-sans-serif, system-ui, sans-serif;
-  /* Instrument Serif에는 한글이 없어서 한글은 Noto Serif KR로 이어 붙인다 */
-  --font-serif: var(--font-instrument), var(--font-noto-serif-kr), "Batang", serif;
+  /* Helvetica Neue에는 한글이 없어서 한글은 Noto Sans KR로 이어 붙인다.
+     한글 글꼴을 PC에 깔린 글꼴(Helvetica·Arial)보다 앞에 둔다: 뒤에 두면 일부 한글 글자가 PC의 다른 글꼴로 그려져 굵기가 들쭉날쭉해진다 (2026-11-13). */
+  --font-sans: "Helvetica Neue Light", var(--font-noto-sans-kr), "Helvetica Neue", Helvetica, Arial, "Pretendard", "Malgun Gothic", sans-serif;
 }
 
 :root {
-  --background: #000000;
-  --foreground: #ffffff;
+  /* 영상이 뜨기 전(또는 못 뜰 때) 보이는 바탕색 */
+  --background: #c2ccd3;
+  --foreground: #000000;
 }
 
 html,
@@ -23,93 +25,438 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  letter-spacing: -0.01em;
 }
 
 ::selection {
-  background: #fff;
-  color: #000;
+  background: #000;
+  color: #fff;
 }
 
 /* 키보드로 움직일 때 보이는 초점 표시 */
 :focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline: 2px solid rgba(0, 0, 0, 0.85);
   outline-offset: 3px;
 }
 
-/* ── 유리(Liquid Glass) ───────────────────────────────────────── */
-.liquid-glass {
-  background: rgba(255, 255, 255, 0.01);
-  background-blend-mode: luminosity;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border: none;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
-  position: relative;
-  overflow: hidden;
-}
-
-.liquid-glass::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1.4px;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.45) 0%,
-    rgba(255, 255, 255, 0.15) 20%,
-    rgba(255, 255, 255, 0) 40%,
-    rgba(255, 255, 255, 0) 60%,
-    rgba(255, 255, 255, 0.15) 80%,
-    rgba(255, 255, 255, 0.45) 100%
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
+/* ── 배경 영상: 막·색 입히기 없이 그대로 ─────────────────────────── */
+.bg-video {
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  opacity: 1;
   pointer-events: none;
 }
 
-.glass-pill {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+/* ── 양옆 세로 장식선 (768px 이상에서만) ─────────────────────────── */
+.rule {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.rule--left { left: 1.25rem; }
+.rule--right { right: 1.25rem; }
+.rule__seg { width: 1px; background: rgba(0, 0, 0, 0.2); }
+.rule__seg--end { height: 15%; }
+.rule__seg--mid { flex: 1 1 0%; }
+.rule__plus {
+  font-size: 0.75rem;
+  line-height: 1;
+  color: rgba(0, 0, 0, 0.4);
+  padding: 0.25rem 0;
+}
+@media (min-width: 768px) {
+  .rule { display: flex; }
+}
+
+/* ── 위쪽 메뉴 줄 ─────────────────────────────────────────────── */
+.nav {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem;
+}
+.nav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  color: #000;
+  background: none;
+  border: 0;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 300ms;
+}
+.nav__item:hover { opacity: 0.6; }
+.nav__label {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  letter-spacing: 0.025em;
+}
+.nav__label--menu { display: none; }
+.nav__dot {
+  width: 8px;
+  height: 8px;
   border-radius: 9999px;
-  box-shadow: none !important;
+  background: #000;
 }
-
-/*
- * 결과 표를 올리는 어두운 유리 패널.
- * 영상 위에서도 글자가 또렷이 읽혀야 해서(정확도가 중요한 도구) 일반 유리보다 어둡게 깔고 흐림을 더 준다.
- */
-.glass-panel {
-  background: rgba(8, 6, 18, 0.62);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-}
-
-/* ── 오로라 배경: 빛 덩어리가 천천히 떠다닌다 (AuroraBackground.tsx) ───────── */
-.aurora-blob {
+.nav__brand {
   position: absolute;
-  border-radius: 50%;
-  will-change: transform;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  color: #000;
+  transition: opacity 300ms;
 }
-.aurora-a { animation: aurora-a 26s ease-in-out infinite alternate; }
-.aurora-b { animation: aurora-b 32s ease-in-out infinite alternate; }
-.aurora-c { animation: aurora-c 22s ease-in-out infinite alternate; }
-@keyframes aurora-a {
-  from { transform: translate3d(0, 0, 0) scale(1); }
-  to { transform: translate3d(-14vw, 10vh, 0) scale(1.15); }
+.nav__brand:hover { opacity: 0.6; }
+@media (min-width: 640px) {
+  .nav { padding: 1.25rem 1.5rem; }
+  .nav__label--menu { display: inline; }
 }
-@keyframes aurora-b {
-  from { transform: translate3d(0, 0, 0) scale(1); }
-  to { transform: translate3d(16vw, -12vh, 0) scale(1.1); }
+@media (min-width: 768px) {
+  .nav { padding: 1.5rem 3rem; }
 }
-@keyframes aurora-c {
-  from { transform: translate3d(0, 0, 0) scale(0.95); }
-  to { transform: translate3d(-10vw, -14vh, 0) scale(1.2); }
+
+/* ── 첫 화면 배치: 왼쪽 위 글, 오른쪽 아래 유리 카드 ───────────────── */
+.hero-bottom {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 0 1.25rem 1.5rem;
 }
+.lede { max-width: 24rem; }
+/* 첫 화면 제목: 굵게, 휴대폰 20px · PC 30px (2026-11-14 사용자 요청) */
+.lede__title {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  color: #000;
+}
+.lede__body {
+  margin-top: 0.75rem;
+  max-width: 280px;
+  font-size: 0.75rem;
+  line-height: 1.625;
+  color: rgba(0, 0, 0, 0.6);
+}
+.lede__credit {
+  font-size: 0.75rem;
+  letter-spacing: 0.025em;
+  color: rgba(0, 0, 0, 0.6);
+}
+@media (min-width: 640px) {
+  .hero-bottom { padding: 0 1.5rem 2rem; }
+  .lede__body { font-size: 0.875rem; }
+}
+@media (min-width: 768px) {
+  .hero-bottom {
+    flex: 1;
+    margin-top: 0;
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 3rem;
+    padding: 2rem 3rem 3rem;
+  }
+  .lede { display: flex; flex-direction: column; }
+  .lede__credit { margin-top: auto; }
+  .card { align-self: flex-end; }
+  .lede__title { font-size: 30px; }
+  .lede__body { margin-top: 1rem; }
+}
+
+/* ── 모서리 두 곳을 깎은 버튼 (왼쪽 위·오른쪽 아래) ──────────────── */
+.chamfer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  width: 220px;
+  height: 44px;
+  padding: 0 1.25rem;
+  color: #000;
+  background: none;
+  border: 0;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 300ms;
+}
+.chamfer:hover { opacity: 0.7; }
+.chamfer:disabled { opacity: 0.35; cursor: not-allowed; }
+.chamfer__glass {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+.chamfer__outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.chamfer__label {
+  position: relative;
+  font-size: 0.75rem;
+  letter-spacing: 0.025em;
+}
+.chamfer .icon { position: relative; }
+/* 작은 버튼 (표 위·창 안) */
+.chamfer--sm { width: 168px; height: 40px; padding: 0 1rem; }
+@media (min-width: 640px) {
+  .chamfer { width: 260px; height: 48px; padding: 0 1.5rem; }
+  .chamfer--sm { width: 180px; height: 42px; padding: 0 1.125rem; }
+  .chamfer__label { font-size: 0.875rem; }
+  /* 흐린 유리 받침은 좁은 화면에서만. 넓은 화면에서는 가는 테두리만 남긴다 */
+  .chamfer__glass {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-color: transparent;
+  }
+}
+
+/* ── 굴절 유리 카드 (GlassCard.tsx) ───────────────────────────── */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  flex: none;
+  width: 340px;
+  max-width: 100%;
+  height: 460px;
+  padding: 2rem;
+  border-radius: 48px;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid rgba(47, 47, 47, 0.15);
+  animation: fade-slide-up-card 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes fade-slide-up-card {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+#dup-video-container {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+#dup-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  filter: url(#liquid-glass-refraction);
+}
+.card__frost {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 48px;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow:
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.3),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.15);
+  transition: background 400ms;
+}
+.card.group:hover .card__frost { background: rgba(255, 255, 255, 0.1); }
+.card__head,
+.card__body,
+.card__wave {
+  position: relative;
+  z-index: 2;
+}
+.card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+.card__title { font-size: 1rem; font-weight: 500; letter-spacing: -0.025em; }
+.card__index { font-size: 0.75rem; color: rgba(0, 0, 0, 0.4); }
+.card__body { display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem; }
+.finding__title { font-size: 0.875rem; font-weight: 600; letter-spacing: -0.025em; }
+.finding__text {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1.625;
+  color: rgba(0, 0, 0, 0.5);
+}
+.card__wave { display: block; width: 100%; height: auto; margin-top: 1.25rem; }
+@media (min-width: 640px) {
+  .card__title { font-size: 1.125rem; }
+}
+@media (min-width: 768px) {
+  .card__head { padding-bottom: 1rem; }
+  .card__title { font-size: 1.25rem; }
+  .card__body { gap: 1.25rem; margin-top: 1.25rem; }
+  .finding__title { font-size: 1rem; }
+  .finding__text { font-size: 0.875rem; margin-top: 0.375rem; }
+  .card__wave { margin-top: 1.5rem; }
+}
+
+/* ── 왼쪽에서 미끄러져 나오는 메뉴 (Navbar.tsx) ───────────────── */
+.menu {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  visibility: hidden;
+  pointer-events: none;
+  transition: visibility 0s linear 500ms;
+}
+.menu.is-open {
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+.menu__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity 500ms;
+}
+.menu.is-open .menu__backdrop { opacity: 1; }
+.menu__panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 1.5rem 2rem;
+  background: #f5f4f0;
+  transform: translateX(-100%);
+  transition: transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.menu.is-open .menu__panel { transform: translateX(0); }
+@media (min-width: 640px) {
+  .menu__panel { width: 380px; padding: 1.5rem 2.5rem; }
+}
+.menu__close {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  align-self: flex-start;
+  margin-bottom: 3rem;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 0.875rem;
+  color: #000;
+  cursor: pointer;
+  transition: opacity 300ms;
+}
+.menu__close:hover { opacity: 0.6; }
+.menu__nav { display: flex; flex-direction: column; }
+.menu__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 0;
+  border: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: #000;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 500ms, transform 500ms;
+}
+.menu__linkText {
+  font-size: 1.5rem;
+  font-weight: 300;
+  letter-spacing: -0.025em;
+  transition: transform 300ms;
+}
+.menu__link:hover .menu__linkText { transform: translateX(8px); }
+.menu__arrow {
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 300ms, transform 300ms;
+}
+.menu__link:hover .menu__arrow { opacity: 1; transform: translateX(0); }
+@media (min-width: 640px) {
+  .menu__linkText { font-size: 1.875rem; }
+}
+.menu.is-open .menu__link { opacity: 1; transform: translateY(0); }
+.menu.is-open .menu__link:nth-child(1) { transition-delay: 150ms; }
+.menu.is-open .menu__link:nth-child(2) { transition-delay: 225ms; }
+.menu.is-open .menu__link:nth-child(3) { transition-delay: 300ms; }
+.menu.is-open .menu__link:nth-child(4) { transition-delay: 375ms; }
+.menu.is-open .menu__link:nth-child(5) { transition-delay: 450ms; }
+.menu__foot {
+  margin-top: auto;
+  padding: 1.5rem 0 2rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 500ms, transform 500ms;
+}
+.menu.is-open .menu__foot { opacity: 1; transform: translateY(0); transition-delay: 600ms; }
+.menu__footLabel {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.025em;
+  color: rgba(0, 0, 0, 0.4);
+}
+.menu__mail { font-size: 0.875rem; color: rgba(0, 0, 0, 0.7); }
+
+/* ── 결과 표·안내 창을 올리는 밝은 유리판 ─────────────────────────
+   표는 글자가 또렷이 읽혀야 해서(정확도가 중요한 도구) 굴절 유리 대신 흐린 흰 유리를 쓴다. */
+.panel {
+  position: relative;
+  background: rgba(255, 255, 255, 0.74);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(47, 47, 47, 0.15);
+  border-radius: 32px;
+  box-shadow:
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.5),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.08);
+  color: #000;
+}
+/* 안내 창은 메뉴와 같은 종이색 */
+.panel--solid { background: #f5f4f0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.eyebrow { font-size: 0.75rem; letter-spacing: 0.025em; color: rgba(0, 0, 0, 0.4); }
+.display { font-weight: 300; letter-spacing: -0.025em; line-height: 1.25; }
 
 /* 움직임을 줄이도록 설정한 사용자에게는 애니메이션을 멈춘다 */
 @media (prefers-reduced-motion: reduce) {

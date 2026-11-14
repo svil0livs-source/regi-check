@@ -1,10 +1,11 @@
 "use client";
 // Design Ref: DESIGN.md §3 — 화면 3개(업로드 → 요약 → 상세)를 한 페이지에서 바꿔 가며 보여 준다. (PLAN 12~15번)
-// 디자인: 검은 바탕 + 움직이는 액체 영상 + 유리 패널 (사용자 제공 "Cinematic Liquid Glass" 문서, 2026-11-05)
+// 디자인: 밝은 영상 배경 + 검은 글자 + 굴절 유리 카드·흐린 흰 유리판 (사용자 제공 "Terranova" 문서, 2026-11-13)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
-import AuroraBackground from "@/components/AuroraBackground";
+import { ArrowLeft, Trash2 } from "lucide-react";
+import BackgroundVideo from "@/components/BackgroundVideo";
+import ChamferButton from "@/components/ChamferButton";
 import Hero from "@/components/Hero";
 import InfoModal, { type InfoTopic } from "@/components/InfoModal";
 import Navbar, { type NavLink } from "@/components/Navbar";
@@ -53,11 +54,11 @@ type Progress = {
 type ProgressStep = Omit<Progress, "startedAt">;
 
 const SUMMARY_STYLE: Record<CaseSummary, string> = {
-  all_match: "bg-emerald-400/10 text-emerald-200 ring-emerald-300/30",
-  mismatch_found: "bg-red-400/10 text-red-200 ring-red-300/30",
-  needs_review: "bg-amber-300/10 text-amber-100 ring-amber-200/30",
-  file_problem: "bg-white/5 text-white/70 ring-white/20",
-  processing_failed: "bg-white/5 text-white/70 ring-white/20",
+  all_match: "bg-emerald-600/10 text-emerald-800 ring-emerald-700/30",
+  mismatch_found: "bg-red-600/10 text-red-800 ring-red-700/30",
+  needs_review: "bg-amber-500/15 text-amber-900 ring-amber-700/35",
+  file_problem: "bg-black/5 text-black/70 ring-black/20",
+  processing_failed: "bg-black/5 text-black/70 ring-black/20",
 };
 const SUMMARY_MARK: Record<CaseSummary, string> = {
   all_match: "●",
@@ -67,10 +68,10 @@ const SUMMARY_MARK: Record<CaseSummary, string> = {
   processing_failed: "!",
 };
 const STATUS_STYLE: Record<FieldStatus, string> = {
-  match: "text-emerald-300",
-  mismatch: "text-red-300 font-semibold",
-  needs_review: "text-amber-200 font-semibold",
-  unreadable: "text-white/60 font-semibold",
+  match: "text-emerald-800",
+  mismatch: "text-red-700 font-semibold",
+  needs_review: "text-amber-800 font-semibold",
+  unreadable: "text-black/60 font-semibold",
 };
 const STATUS_ORDER: Record<FieldStatus, number> = { mismatch: 0, needs_review: 1, unreadable: 2, match: 3 };
 
@@ -381,7 +382,7 @@ export default function Verifier() {
 
   return (
     <main
-      className={`relative flex flex-col bg-black selection:bg-white selection:text-black ${showHero ? "h-screen overflow-hidden" : "min-h-screen"}`}
+      className={`relative flex min-h-dvh flex-col ${showHero ? "md:h-dvh md:overflow-hidden" : ""}`}
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -407,14 +408,24 @@ export default function Verifier() {
         await accept(picked);
       }}
     >
-      <AuroraBackground />
+      <BackgroundVideo />
+      {/* 양옆 세로 장식선 */}
+      {(["left", "right"] as const).map((side) => (
+        <div key={side} className={`rule rule--${side}`} aria-hidden="true">
+          <div className="rule__seg rule__seg--end" />
+          <span className="rule__plus">+</span>
+          <div className="rule__seg rule__seg--mid" />
+          <span className="rule__plus">+</span>
+          <div className="rule__seg rule__seg--end" />
+        </div>
+      ))}
       {/* 폴더를 끌고 오면 화면 전체에 놓을 자리를 보여 준다 */}
       {dragging && !uploadOpen && (
         <div
           aria-hidden
-          className="pointer-events-none fixed inset-4 z-40 flex items-center justify-center rounded-3xl border-2 border-dashed border-white/70 bg-white/10 backdrop-blur-sm"
+          className="pointer-events-none fixed inset-4 z-40 flex items-center justify-center rounded-[48px] border border-dashed border-black/60 bg-white/50 backdrop-blur-md"
         >
-          <p className="font-serif text-3xl text-white [text-shadow:0_1px_14px_rgba(0,0,0,0.75)]">여기에 폴더를 놓으세요</p>
+          <p className="display text-3xl text-black">여기에 폴더를 놓으세요</p>
         </div>
       )}
       <input ref={inputRef} type="file" multiple hidden onChange={(e) => accept(fromFileList(e.target.files))} />
@@ -422,7 +433,7 @@ export default function Verifier() {
       <Navbar
         links={NAV_LINKS}
         onLink={(id) => (id === "history" ? (setHistory(true), setHistoryDetail(null)) : setInfo(id as InfoTopic))}
-        action={hasWork ? { label: "새 검증 시작", onClick: reset } : null}
+        action={hasWork ? { label: "새 검증 시작", onClick: reset } : { label: "검증 기준", onClick: () => setInfo("rules") }}
         onHome={goHome}
       />
 
@@ -432,18 +443,17 @@ export default function Verifier() {
           storedCount={stored.size}
           blocking={blocking}
           onPick={() => setUploadOpen(true)}
-          onInfo={() => setInfo("rules")}
           onHistory={() => setHistory(true)}
         />
       ) : (
-        <div className="relative z-10 mx-auto w-full max-w-5xl flex-1 px-4 pb-16 sm:px-6">
+        <div className="relative z-10 mx-auto w-full max-w-5xl flex-1 px-4 pb-16 pt-2 sm:px-6 md:px-12">
           {blocking && (
-            <p role="alert" className="mb-4 rounded-2xl border border-red-300/30 bg-red-400/10 px-4 py-3 text-sm text-red-100">
+            <p role="alert" className="mb-4 border-l-2 border-red-700 bg-white/70 px-4 py-3 text-sm text-red-800 backdrop-blur">
               {blocking}
             </p>
           )}
           {storageWarning && (
-            <p role="status" className="mb-4 break-keep rounded-2xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+            <p role="status" className="mb-4 break-keep border-l-2 border-amber-700 bg-white/70 px-4 py-3 text-sm text-amber-900 backdrop-blur">
               이 브라우저가 결과 저장을 막고 있습니다(시크릿 창 등). 지금 화면의 결과는 볼 수 있지만, 새로고침하거나 창을 닫으면 사라지고 「이전 결과」에도 남지 않습니다.
             </p>
           )}
@@ -452,29 +462,25 @@ export default function Verifier() {
             historyDetailItem ? (
               <Detail outcome={historyDetailItem.outcome} onBack={() => setHistoryDetail(null)} />
             ) : (
-              <section aria-label="이전 결과" className="glass-panel liquid-glass rounded-3xl p-5 sm:p-8">
+              <section aria-label="이전 결과" className="panel p-5 sm:p-8">
                 <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
                   <div>
-                    <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/60">이전 결과</p>
-                    <h1 className="mt-2 font-serif text-3xl font-normal leading-tight text-white sm:text-4xl">지금까지 끝낸 검증</h1>
-                    <p className="mt-2 break-keep text-sm text-white/60">
-                      <b className="font-semibold text-white">{historyList.length}</b>건 · 이 컴퓨터의 이 브라우저에만 보관됩니다. 다른 기기에서는 보이지 않습니다.
+                    <p className="eyebrow">이전 결과</p>
+                    <h1 className="display mt-2 text-3xl sm:text-4xl">지금까지 끝낸 검증</h1>
+                    <p className="mt-2 break-keep text-sm text-black/60">
+                      <b className="font-semibold text-black">{historyList.length}</b>건 · 이 컴퓨터의 이 브라우저에만 보관됩니다. 다른 기기에서는 보이지 않습니다.
                     </p>
                   </div>
-                  <button
-                    onClick={clearHistory}
-                    disabled={historyList.length === 0}
-                    className="glass-pill border border-white/20 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:border-red-300/60 hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
+                  <ChamferButton small onClick={clearHistory} disabled={historyList.length === 0} icon={<Trash2 size={16} strokeWidth={1.5} aria-hidden className="icon" />}>
                     기록 지우기
-                  </button>
+                  </ChamferButton>
                 </div>
                 {historyList.length === 0 ? (
-                  <p className="rounded-2xl bg-white/5 px-4 py-10 text-center text-sm text-white/60">아직 끝낸 검증이 없습니다.</p>
+                  <p className="border-t border-black/10 px-4 py-10 text-center text-sm text-black/50">아직 끝낸 검증이 없습니다.</p>
                 ) : (
-                  <div className="overflow-x-auto rounded-2xl ring-1 ring-white/10">
+                  <div className="overflow-x-auto border-y border-black/10">
                     <table className="w-full text-left text-sm">
-                      <thead className="bg-white/5 text-white/60">
+                      <thead className="text-xs text-black/50">
                         <tr>
                           <th scope="col" className="px-4 py-3 font-medium">폴더 이름</th>
                           <th scope="col" className="px-4 py-3 font-medium">결과</th>
@@ -482,20 +488,20 @@ export default function Verifier() {
                           <th scope="col" className="px-4 py-3"><span className="sr-only">자세히</span></th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-white/10">
+                      <tbody className="divide-y divide-black/10 border-t border-black/10">
                         {historyList.map(([folder, item]) => {
                           const s = item.outcome.summary;
                           const canOpen = s === "mismatch_found" || s === "needs_review";
                           return (
-                            <tr key={folder} className="transition-colors hover:bg-white/[0.03]">
-                              <td className="px-4 py-3 font-mono text-white">{folder}</td>
+                            <tr key={folder} className="transition-colors hover:bg-black/[0.03]">
+                              <td className="px-4 py-3 font-mono text-black">{folder}</td>
                               <td className="px-4 py-3">
                                 <Badge summary={s} />
                               </td>
-                              <td className="px-4 py-3 text-white/60">{new Date(item.savedAt).toLocaleString("ko-KR")}</td>
+                              <td className="px-4 py-3 text-black/60">{new Date(item.savedAt).toLocaleString("ko-KR")}</td>
                               <td className="px-4 py-3 text-right">
                                 {canOpen && (
-                                  <button onClick={() => setHistoryDetail(folder)} className="rounded text-sm font-medium text-violet-200 hover:text-white hover:underline">
+                                  <button onClick={() => setHistoryDetail(folder)} className="rounded text-sm text-black underline underline-offset-4 transition-opacity duration-300 hover:opacity-60">
                                     자세히
                                   </button>
                                 )}
@@ -510,30 +516,26 @@ export default function Verifier() {
               </section>
             )
           ) : !detailRow ? (
-            <section aria-label="건별 결과" className="glass-panel liquid-glass rounded-3xl p-5 sm:p-8">
+            <section aria-label="건별 결과" className="panel p-5 sm:p-8">
               <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
                 <div>
-                  <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/60">검증 결과</p>
-                  <h1 className="mt-2 font-serif text-3xl font-normal leading-tight text-white sm:text-4xl">
+                  <p className="eyebrow">검증 결과</p>
+                  <h1 className="display mt-2 text-3xl sm:text-4xl">
                     {running ? "읽고 대조하는 중" : counts.waiting > 0 ? "검증할 준비가 됐습니다" : "검증이 끝났습니다"}
                   </h1>
-                  <p className="mt-2 text-sm text-white/60">
-                    <b className="font-semibold text-white">{counts.done}</b> / {counts.total}건 완료
+                  <p className="mt-2 text-sm text-black/60">
+                    <b className="font-semibold text-black">{counts.done}</b> / {counts.total}건 완료
                     {running && " · 한 건에 45초쯤 걸립니다. 정확도를 위해 여러 번 읽습니다."}
                   </p>
                 </div>
-                <button
-                  onClick={run}
-                  disabled={running || counts.waiting === 0}
-                  className="glass-pill border border-white/20 px-8 py-3 text-sm font-medium text-white transition-colors hover:border-white/50 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
+                <ChamferButton small onClick={run} disabled={running || counts.waiting === 0}>
                   검증하기
-                </button>
+                </ChamferButton>
               </div>
 
-              <div className="overflow-x-auto rounded-2xl ring-1 ring-white/10">
+              <div className="overflow-x-auto border-y border-black/10">
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-white/5 text-white/60">
+                  <thead className="text-xs text-black/50">
                     <tr>
                       <th scope="col" className="px-4 py-3 font-medium">폴더 이름</th>
                       <th scope="col" className="px-4 py-3 font-medium">결과</th>
@@ -541,25 +543,25 @@ export default function Verifier() {
                       <th scope="col" className="px-4 py-3"><span className="sr-only">자세히</span></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/10">
+                  <tbody className="divide-y divide-black/10 border-t border-black/10">
                     {rows.map((r) => {
                       const s = r.outcome?.summary;
                       const canOpen = s === "mismatch_found" || s === "needs_review";
                       return (
-                        <tr key={r.check.id} className="transition-colors hover:bg-white/[0.03]">
-                          <td className="px-4 py-3 font-mono text-white">{r.check.folder}</td>
+                        <tr key={r.check.id} className="transition-colors hover:bg-black/[0.03]">
+                          <td className="px-4 py-3 font-mono text-black">{r.check.folder}</td>
                           <td className="px-4 py-3">
-                            {r.state === "waiting" && <span className="text-white/50">대기</span>}
+                            {r.state === "waiting" && <span className="text-black/50">대기</span>}
                             {r.state === "running" && <RunningStatus progress={r.progress} />}
                             {r.state === "done" && s && <Badge summary={s} />}
                           </td>
-                          <td className="px-4 py-3 text-white/60">
+                          <td className="px-4 py-3 text-black/60">
                             {r.outcome?.error}
-                            {r.resumed && <span className="text-white/45">이전 결과 이어 씀</span>}
+                            {r.resumed && <span className="text-black/50">이전 결과 이어 씀</span>}
                           </td>
                           <td className="px-4 py-3 text-right">
                             {canOpen && (
-                              <button onClick={() => setDetail(r.check.id)} className="rounded text-sm font-medium text-violet-200 hover:text-white hover:underline">
+                              <button onClick={() => setDetail(r.check.id)} className="rounded text-sm text-black underline underline-offset-4 transition-opacity duration-300 hover:opacity-60">
                                 자세히
                               </button>
                             )}
@@ -594,25 +596,22 @@ function Detail({ outcome, onBack }: { outcome: CaseOutcome; onBack: () => void 
   const label = (r: FieldResult) =>
     FIELD_KEY_LABELS[r.key] + ((counts.get(r.key) ?? 0) > 1 && r.index ? ` ${r.index}` : "");
   const sorted = [...outcome.results].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
-  const show = (v: string | null, r: FieldResult) => (v === null ? <span className="text-white/40">{r.reason?.includes("없음") ? "없음" : "읽지 못함"}</span> : v === "" ? <span className="text-white/40">(빈칸)</span> : v);
+  const show = (v: string | null, r: FieldResult) => (v === null ? <span className="text-black/50">{r.reason?.includes("없음") ? "없음" : "읽지 못함"}</span> : v === "" ? <span className="text-black/50">(빈칸)</span> : v);
 
   return (
-    <section aria-label="상세 결과" className="glass-panel liquid-glass rounded-3xl p-5 sm:p-8">
+    <section aria-label="상세 결과" className="panel p-5 sm:p-8">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
-          <h2 className="font-mono text-lg font-semibold text-white">{outcome.folder}</h2>
+          <h2 className="font-mono text-lg font-semibold text-black">{outcome.folder}</h2>
           <Badge summary={outcome.summary} />
         </div>
-        <button
-          onClick={onBack}
-          className="glass-pill flex items-center gap-2 border border-white/15 px-5 py-2 text-sm text-white/90 transition-colors hover:border-white/40"
-        >
-          <ArrowLeft size={15} aria-hidden /> 목록으로
+        <button onClick={onBack} className="flex items-center gap-2 rounded text-sm text-black transition-opacity duration-300 hover:opacity-60">
+          <ArrowLeft size={16} strokeWidth={1.5} aria-hidden /> 목록으로
         </button>
       </div>
-      <div className="overflow-x-auto rounded-2xl ring-1 ring-white/10">
+      <div className="overflow-x-auto border-y border-black/10">
         <table className="w-full text-left text-sm">
-          <thead className="bg-white/5 text-white/60">
+          <thead className="text-xs text-black/50">
             <tr>
               <th scope="col" className="px-4 py-3 font-medium">항목</th>
               <th scope="col" className="px-4 py-3 font-medium">한글 서류</th>
@@ -620,15 +619,15 @@ function Detail({ outcome, onBack }: { outcome: CaseOutcome; onBack: () => void 
               <th scope="col" className="px-4 py-3 font-medium">상태</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/10">
+          <tbody className="divide-y divide-black/10 border-t border-black/10">
             {sorted.map((r, i) => (
-              <tr key={`${r.key}-${r.index ?? 0}-${i}`} className={r.status === "match" ? "" : "bg-white/[0.04]"}>
-                <td className="whitespace-nowrap px-4 py-3 text-white/70">{label(r)}</td>
-                <td className="px-4 py-3 text-white">{show(r.hwpValue, r)}</td>
-                <td className="px-4 py-3 text-white">{show(r.registryValue, r)}</td>
+              <tr key={`${r.key}-${r.index ?? 0}-${i}`} className={r.status === "match" ? "" : "bg-black/[0.04]"}>
+                <td className="whitespace-nowrap px-4 py-3 text-black/70">{label(r)}</td>
+                <td className="px-4 py-3 text-black">{show(r.hwpValue, r)}</td>
+                <td className="px-4 py-3 text-black">{show(r.registryValue, r)}</td>
                 <td className={`whitespace-nowrap px-4 py-3 ${STATUS_STYLE[r.status]}`}>
                   {FIELD_STATUS_LABELS[r.status]}
-                  {r.reason && r.status !== "match" && <div className="mt-0.5 whitespace-normal text-xs font-normal text-white/50">{r.reason}</div>}
+                  {r.reason && r.status !== "match" && <div className="mt-0.5 whitespace-normal text-xs font-normal text-black/50">{r.reason}</div>}
                 </td>
               </tr>
             ))}
@@ -651,13 +650,13 @@ function RunningStatus({ progress: p }: { progress?: Progress }) {
   const ratio = !p || p.stage === "prepare" ? 0 : p.stage === "compare" ? 1 : (p.pass - 1 + (p.pages ? p.pagesDone / p.pages : 0)) / p.passes;
   return (
     <div className="min-w-44" role="status">
-      <span className="animate-pulse text-violet-200">{label}</span>
-      <div className="mt-1 text-xs text-white/55">
+      <span className="animate-pulse text-black">{label}</span>
+      <div className="mt-1 text-xs text-black/55">
         {detail && <span>{detail} · </span>}
         {p && <Elapsed since={p.startedAt} />}
       </div>
-      <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10" aria-hidden="true">
-        <div className="h-full rounded-full bg-violet-300/70 transition-[width] duration-500" style={{ width: `${Math.round(ratio * 100)}%` }} />
+      <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-black/10" aria-hidden="true">
+        <div className="h-full rounded-full bg-black transition-[width] duration-500" style={{ width: `${Math.round(ratio * 100)}%` }} />
       </div>
     </div>
   );
