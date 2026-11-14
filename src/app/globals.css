@@ -112,15 +112,13 @@ body {
   border-radius: 9999px;
   background: #000;
 }
-/* 사이트 이름: 굵게, 휴대폰 20px · PC 30px (2026-11-13 사용자 요청).
-   Light 글꼴에는 굵은 글자가 없어서 PC에 깔린 Helvetica·Arial의 진짜 굵은 글자를 쓴다. */
 .nav__brand {
-  margin: 0 auto 0 0.75rem;
-  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
   color: #000;
   transition: opacity 300ms;
 }
@@ -128,15 +126,6 @@ body {
 @media (min-width: 640px) {
   .nav { padding: 1.25rem 1.5rem; }
   .nav__label--menu { display: inline; }
-  /* 넓은 화면에서는 가운데에 둔다 (좁은 화면에서는 오른쪽 버튼과 겹치지 않게 「메뉴」 옆) */
-  .nav__brand {
-    position: absolute;
-    left: 50%;
-    margin: 0;
-    transform: translateX(-50%);
-    font-size: 30px;
-    letter-spacing: 0.12em;
-  }
 }
 @media (min-width: 768px) {
   .nav { padding: 1.5rem 3rem; }
@@ -153,9 +142,10 @@ body {
   padding: 0 1.25rem 1.5rem;
 }
 .lede { max-width: 24rem; }
+/* 첫 화면 제목: 굵게, 휴대폰 20px · PC 30px (2026-11-14 사용자 요청) */
 .lede__title {
-  font-size: 1.25rem;
-  font-weight: 300;
+  font-size: 20px;
+  font-weight: 700;
   line-height: 1.25;
   letter-spacing: -0.025em;
   color: #000;
@@ -174,7 +164,6 @@ body {
 }
 @media (min-width: 640px) {
   .hero-bottom { padding: 0 1.5rem 2rem; }
-  .lede__title { font-size: 1.5rem; }
   .lede__body { font-size: 0.875rem; }
 }
 @media (min-width: 768px) {
@@ -190,11 +179,8 @@ body {
   .lede { display: flex; flex-direction: column; }
   .lede__credit { margin-top: auto; }
   .card { align-self: flex-end; }
-  .lede__title { font-size: 1.875rem; }
+  .lede__title { font-size: 30px; }
   .lede__body { margin-top: 1rem; }
-}
-@media (min-width: 1024px) {
-  .lede__title { font-size: 2.25rem; }
 }
 
 /* ── 모서리 두 곳을 깎은 버튼 (왼쪽 위·오른쪽 아래) ──────────────── */
