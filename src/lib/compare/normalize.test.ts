@@ -121,6 +121,20 @@ describe("표기만 다른 지번·면적·호수", () => {
   });
 });
 
+describe("normalizeArea: 소수 둘째 자리까지만 비교 (2026-11-16 사용자 결정)", () => {
+  it("셋째 자리부터는 버리고 비교한다 (반올림 아님)", () => {
+    expect(normalizeArea("68.991㎡")).toBe(normalizeArea("68.99㎡"));
+    expect(normalizeArea("99.642911㎡")).toBe(normalizeArea("99.6429㎡"));
+    expect(normalizeArea("59.829㎡")).toBe("59.82");
+    expect(normalizeArea("84.004㎡")).toBe("84");
+    expect(normalizeArea("1층 51.369㎡, 2층 50.1㎡")).toBe(normalizeArea("1층 51.36㎡, 2층 50.10㎡"));
+  });
+  it("둘째 자리까지가 다르면 다른 값이다", () => {
+    expect(normalizeArea("68.98㎡")).not.toBe(normalizeArea("68.991㎡"));
+    expect(normalizeArea("68.9㎡")).not.toBe(normalizeArea("68.99㎡"));
+  });
+});
+
 describe("normalizeArea: 일반건물 층별 면적 (2026-11-09)", () => {
   it("층마다 숫자를 정리해 비교한다 (끝 0·단위 표기 무시)", () => {
     expect(normalizeArea("1층 51.36㎡, 2층 50.10㎡")).toBe(normalizeArea("1층 51.36m2, 2층 50.1㎡"));

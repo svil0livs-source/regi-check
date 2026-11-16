@@ -88,19 +88,22 @@ export function splitUnitDong(normalized: string): { dong: string | null; rest: 
 /**
  * 면적의 표기 차이를 없앤다. 단위(㎡·m²·m2·제곱미터·평방미터)는 같은 것으로 보고,
  * 소수 끝의 0(59.820 = 59.82)도 같은 값으로 본다. 숫자+단위 모양이 아니면 정규화한 글자 그대로 비교한다.
+ * 소수 둘째 자리까지만 비교한다(셋째 자리부터는 버림, 반올림 아님): 스캔본에서 ㎡ 기호가 숫자로 읽혀
+ * 끝에 붙는 일이 잦아서다 (예: 68.99㎡ → "68.991"). 셋째 자리부터 다른 값은 같은 값으로 본다 (2026-11-16 사용자 결정).
  */
+const areaFraction = (frac: string | undefined) => (frac ?? "").slice(0, 2).replace(/0+$/u, "");
 export function normalizeArea(raw: string): string {
   const text = normalizeText(raw) // NFKC가 ㎡·m²를 "m2"로 바꾼다
     .replace(/(제곱|평방)미터|m\^?2/giu, "m2");
   // 일반건물의 층별 면적 "1층 51.36㎡, 2층 50.10㎡" → 층마다 숫자를 같은 방식으로 정리해 잇는다 (2026-11-09)
   const floors = [...text.matchAll(/((?:지하|지|옥탑)?\d*층)(\d+)(?:\.(\d+))?m2/gu)];
   if (floors.length && floors.map((f) => f[0]).join("") === text) {
-    return floors.map((f) => `${f[1]}${f[2].replace(/^0+(?=\d)/u, "")}${(f[3] ?? "").replace(/0+$/u, "") ? "." + (f[3] ?? "").replace(/0+$/u, "") : ""}`).join("/");
+    return floors.map((f) => `${f[1]}${f[2].replace(/^0+(?=\d)/u, "")}${areaFraction(f[3]) ? "." + areaFraction(f[3]) : ""}`).join("/");
   }
   const m = /^(\d+)(?:\.(\d+))?(m2)?$/u.exec(text);
   if (!m) return text;
   const int = m[1].replace(/^0+(?=\d)/u, "");
-  const frac = (m[2] ?? "").replace(/0+$/u, "");
+  const frac = areaFraction(m[2]);
   return frac ? `${int}.${frac}` : int;
 }
 
