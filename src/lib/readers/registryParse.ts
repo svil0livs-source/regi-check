@@ -75,7 +75,8 @@ const DATE_RE = /(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/;
 const RECEIPT_RE = /제\s*([\d/ ]{3,})\s*호/;
 // 주민·법인등록번호 (읽기 오류로 숫자가 '/'가 되기도 한다). 이 번호부터 줄 끝까지는 이름이 아니다.
 const ID_RE = /[\d/]{6}\s*-\s*[\d*/]{5,}/;
-const ADDRESS_LOT_RE = /(\S*(?:특별시|광역시|특별자치시|특별자치도|도)\s+(?:\S+\s+){0,3}?\S+[동리가])\s+(\d+(?:-\d+)?)(?=\s|$)/;
+// 지번이 여러 개면("639, 640" · "639외 1필지") 첫 지번을 읽는다: 한글 서류도 첫 지번을 적는다 (2026-11-16 실제 스캔본)
+export const ADDRESS_LOT_RE = /(\S*(?:특별시|광역시|특별자치시|특별자치도|도)\s+(?:\S+\s+){0,3}?\S+[동리가])\s+(\d+(?:-\d+)?)(?=\s|,|외|$)/;
 // "층"은 "충·중·증"으로 잘못 읽히기 쉽다. 숫자 뒤 "층" 자리 글자이므로 같은 것으로 보고 "층"으로 적는다
 // 호수 숫자 앞에 글자가 붙기도 한다 (예: "제8층 제씨-809호", 2026-11-13 실제 서류)
 const UNIT_RE = /(제\s*\d+\s*[층충중증]\s*제\s*(?:[가-힣A-Za-z]{1,3}\s*-\s*)?\d+\s*)(\S)/;
@@ -333,6 +334,23 @@ function headerDong(header: ParseLine, confMin: number): { unit: string; dong: O
   return { unit: fixFloor(compact(u[1])), dong: valueFrom(header, before, confMin) };
 }
 
+/**
+ * 전유부분 면적 숫자 정리 (2026-11-16 사용자 결정: 면적은 소수 둘째 자리까지만 대조).
+ * 스캔본은 ㎡의 m을 숫자 1로 읽어 끝에 붙이는 일이 잦다 (예: 114.62㎡ → "114.621", 49.98㎡ → "49.9811").
+ * 붙은 숫자는 셋째 자리부터라 대조에 쓰이지 않으므로, 의심스러운 모양(소수 셋째 자리, 다섯째 자리 이상, 단위 못 읽음)이면
+ * 둘째 자리까지만 남긴다. 단위까지 읽은 넷째 자리 면적(84.9457㎡)은 읽은 그대로 보여 준다.
+ * 단위를 못 읽었는데 끝의 1들을 떼면 소수가 두 자리가 안 되면(예: 30.5㎡ → "30.511", 85㎡ → "8511") 붙은 숫자가
+ * 둘째 자리 안으로 들어왔을 수 있어 확신하지 않는다.
+ */
+export function unitAreaValue(digits: string, unitOk: boolean): { text: string; uncertain: boolean; trimmed: boolean } {
+  const clean = digits.replace(/\s+/g, "");
+  const frac = /\.(\d+)$/.exec(clean)?.[1] ?? "";
+  const suspicious = !unitOk || frac.length === 3 || frac.length >= 5;
+  const text = suspicious && frac.length > 2 ? clean.slice(0, clean.length - frac.length + 2) : clean;
+  const uncertain = !unitOk && frac.replace(/1+$/, "").length < 2;
+  return { text, uncertain, trimmed: text !== clean };
+}
+
 /** 표제부: 1동 건물의 소재지번, 전유부분의 건물번호·면적 */
 function parseProperties(header: ParseLine | undefined, building: ParseLine[], unit: ParseLine[], confMin: number, headers: ParseLine[] = []): RegistryRead["properties"] {
   // 1동의 건물: 소재·지번 (건물명칭·도로명주소 빼기)
@@ -346,18 +364,22 @@ function parseProperties(header: ParseLine | undefined, building: ParseLine[], u
     const u = UNIT_RE.exec(line.text);
     if (!u) return [];
     // 구조 이름(「…구조」「…라멘조」「벽돌조」 등) 바로 뒤의 숫자가 전유 면적
-    const area = /조\s*([\d,]+(?:\s*\.\s*\d+)?)\s*([^\s\d]{0,3})/.exec(line.text);
+    // 구조 이름의 끝 글자 「조」를 다른 글자로 읽었으면(2026-11-16 실제 스캔본) 호수 바로 뒤 한글 낱말(구조 이름) 다음의 숫자를 면적으로 본다
+    const area =
+      /조\s*([\d,]+(?:\s*\.\s*\d+)?)\s*([^\s\d]{0,3})/.exec(line.text) ??
+      /^\s*[가-힣]{3,}\s+([\d,]+(?:\s*\.\s*\d+)?)\s*([^\s\d]{0,3})/.exec(line.text.slice(u.index + u[0].length));
     const unitText = fixFloor(compact(u[1])).replace(/층제/, "층 제") + "호";
     const unitOk = u[2] === "호";
-    // 단위 기호(㎡)를 못 읽었으면 숫자 끝에 단위가 숫자로 잘못 붙었을 수 있다 (예: 49.98㎡ → "49.9811"). 그때는 확신하지 않는다
+    // 단위 기호(㎡)를 못 읽었으면 숫자 끝에 단위가 숫자로 잘못 붙었을 수 있다 (예: 49.98㎡ → "49.9811")
     const areaUnitOk = !!area && /^(㎡|m²|m2|ㅁ|ㅠ|ㅁㅠ|rf|nf)$/.test(area[2]);
+    const areaRead = area ? unitAreaValue(area[1], areaUnitOk) : null;
     return [
       {
         unitNumber: unitOk ? v(unitText, valueConfidence(line, compact(u[1])) < confMin) : v(unitText, true),
         // 면적 단위 기호(㎡)는 'ㅁ', 'ㅠ'로 잘못 읽히기 쉬워 숫자만 쓰고 단위는 ㎡로 적는다
-        // 소수 셋째 자리가 있으면 ㎡의 m을 숫자 1로 읽어 붙였을 수 있다 (예: 114.62㎡ → "114.621"). 고치지 않고 확신하지 않는다
-        // 소수 넷째 자리까지 적는 면적도 있다 (예: 84.9457㎡, 2026-11-13 실제 스캔본): 단위 기호까지 읽었으면 넷째 자리는 그대로 믿는다
-        area: area ? { text: `${area[1]}㎡`, uncertain: !areaUnitOk || /\.\s*\d{3}(?!\d)/.test(area[1]) || /\.\s*\d{5,}/.test(area[1]) || valueConfidence(line, area[1]) < confMin } : v(null, false),
+        // 면적은 소수 둘째 자리까지만 대조한다 (2026-11-16 사용자 결정): 끝에 붙은 숫자가 의심스러우면 둘째 자리까지만 쓴다
+        // 끝 숫자를 떼어 낸 읽기는 그 붙은 숫자 때문에 낱말 확신도가 낮게 나온다: 확신도로 거르지 않고, 읽기 설정을 바꿔 가며 읽은 것들의 다수결(ocrVote)이 같은 값일 때만 믿는다
+        area: area && areaRead ? { text: `${areaRead.text}㎡`, uncertain: areaRead.uncertain || (!areaRead.trimmed && valueConfidence(line, area[1]) < confMin) } : v(null, false),
       },
     ];
   });

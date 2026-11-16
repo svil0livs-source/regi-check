@@ -6,6 +6,13 @@ import type { RegistryRead } from "./registryOcr";
 const o = (text: string | null, uncertain = false) => ({ text, uncertain });
 
 describe("voteValue", () => {
+  it("모든 읽기가 같은 글자이고 한 번이라도 확신 있으면 믿는다 (2026-11-16 사용자 결정)", () => {
+    expect(voteValue([o("가", true), o("가", true), o("가", true), o("가", true), o("가")]).uncertain).toBe(false);
+    // 전부 확신이 낮으면 믿지 않는다
+    expect(voteValue([o("가", true), o("가", true), o("가", true), o("가", true), o("가", true)]).uncertain).toBe(true);
+    // 하나라도 다르게 읽었으면 예전 규칙대로
+    expect(voteValue([o("가", true), o("가", true), o("가", true), o("가"), o("나")]).uncertain).toBe(true);
+  });
   it("3번 중 2번 같으면 그 값, 확실", () => {
     expect(voteValue([o("장견본"), o("장건본"), o("장견본")])).toEqual(o("장견본"));
   });

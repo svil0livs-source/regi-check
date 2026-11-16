@@ -1,6 +1,6 @@
 // 등기부 표 해석 시험 (Tesseract가 읽은 줄 모양을 흉내 낸 글자로, 외부 서비스 없이)
 import { describe, expect, it } from "vitest";
-import { fuzzyIncludes, parseRegistryLines, valueConfidence, type ParseLine } from "./registryParse";
+import { ADDRESS_LOT_RE, fuzzyIncludes, parseRegistryLines, valueConfidence, type ParseLine } from "./registryParse";
 
 /** 글자마다 같은 확신도를 준 줄 (low에 든 글자는 확신도 30) */
 const L = (text: string, conf = 95, low: string[] = []): ParseLine => ({
@@ -230,9 +230,9 @@ describe("parseRegistryLines: 실제 스캔본 모양", () => {
     expect(r.mortgages[0].mortgageeIdFront.text).toBe("110111");
   });
 
-  it("면적에 소수 셋째 자리가 붙으면(㎡를 1로 읽었을 수 있음) 확신하지 않는다", () => {
+  it("면적에 소수 셋째 자리가 붙으면(㎡를 1로 읽었을 수 있음) 둘째 자리까지만 쓴다 (2026-11-16)", () => {
     const r = parseRegistryLines(scan("제13층 제1301호  철근콘크리트구조 114.621", [L("근저당권자 가나생명보험주식회사 110111-0018443")]));
-    expect(r.properties[0].area.uncertain).toBe(true);
+    expect(r.properties[0].area).toEqual({ text: "114.62㎡", uncertain: false });
   });
 });
 
@@ -383,11 +383,25 @@ describe("parseRegistryLines: 집합건물 스캔본 보완 (2026-11-13)", () =>
     expect(p.unitNumber).toEqual({ text: "제8층 제씨-809호", uncertain: false });
     expect(p.area).toEqual({ text: "80㎡", uncertain: false });
   });
-  it("소수 넷째 자리까지 있는 전유 면적은 단위까지 읽었으면 믿고, 셋째 자리까지면 확신하지 않는다", () => {
+  it("전유 면적: 단위까지 읽은 넷째 자리는 그대로, 끝 숫자가 의심스러우면 둘째 자리까지만 쓴다 (2026-11-16)", () => {
     const area = (a: string) => parseRegistryLines(scan(`1  2010년4월8일  제8층 제809호  철근콘크리트구조 ${a}  전산도면번호`, [])).properties[0].area;
     expect(area("84.9457㎡")).toEqual({ text: "84.9457㎡", uncertain: false });
-    expect(area("114.621㎡")).toEqual({ text: "114.621㎡", uncertain: true });
-    expect(area("84.9457")).toEqual({ text: "84.9457㎡", uncertain: true });
+    expect(area("114.621㎡")).toEqual({ text: "114.62㎡", uncertain: false });
+    expect(area("84.9457")).toEqual({ text: "84.94㎡", uncertain: false });
+    expect(area("99.642911")).toEqual({ text: "99.64㎡", uncertain: false });
+    // 단위를 못 읽었고 끝의 1을 떼면 소수가 두 자리가 안 되면 붙은 숫자가 둘째 자리 안에 들어왔을 수 있다
+    expect(area("30.511").uncertain).toBe(true);
+    expect(area("8511").uncertain).toBe(true);
+  });
+  it("구조 이름 끝 글자를 잘못 읽어도 그 뒤 면적을 읽는다 (2026-11-16 실제 스캔본 모양, 값은 가짜)", () => {
+    const p = parseRegistryLines(scan('1  2010년4월8일  제8층 제809호  철근콘크리트구초 174 . 781"  전산도면번호', [])).properties[0];
+    expect(p.area).toEqual({ text: "174.78㎡", uncertain: false });
+  });
+  it("1동 건물의 지번이 여러 개면 첫 지번을 읽는다 (2026-11-16)", () => {
+    const one = (t: string) => ADDRESS_LOT_RE.exec(t)?.slice(1, 3);
+    expect(one("서울특별시 가나구 다라동 639, 640 마바아파트 제101동")).toEqual(["서울특별시 가나구 다라동", "639"]);
+    expect(one("서울특별시 가나구 다라동 639외 1필지 마바아파트")).toEqual(["서울특별시 가나구 다라동", "639"]);
+    expect(one("서울특별시 가나구 다라동 12-3")).toEqual(["서울특별시 가나구 다라동", "12-3"]);
   });
   it("순위번호도 「근」도 가려져 줄이 「저당권설정」으로 시작해도 채권최고액이 있으면 근저당권으로 본다", () => {
     const m = parseRegistryLines(scan("1  2010년4월8일  제8층 제809호  철근콘크리트구조 80㎡", mortgage("'저당권설정", "채권최고액", ""))).mortgages;

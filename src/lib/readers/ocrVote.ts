@@ -36,7 +36,9 @@ export function voteValue(values: OcrValue[]): OcrValue {
   return {
     text: representative(best).text,
     // 과반이 같게 읽었고, 그 읽기 중 "절반 초과"가 확신 낮음일 때만 불확실 (정확히 절반이면 같게 읽은 쪽을 믿는다, 2026-11-05 사용자 결정)
-    uncertain: !majority || flagged * 2 > best.length,
+    // 읽기 설정을 바꿔 가며 읽은 것이 하나도 빠짐없이 같은 글자이고(3번 이상) 그중 한 번이라도 확신 있게 읽었으면 믿는다
+    // (2026-11-16 사용자 결정: 맞게 읽고도 마지막 낱말 확신도만 낮게 나오는 실제 스캔본이 있었다)
+    uncertain: !majority || (flagged * 2 > best.length && !(n >= 3 && best.length === n && flagged < n)),
   };
 }
 
