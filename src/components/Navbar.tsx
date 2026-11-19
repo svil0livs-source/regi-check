@@ -1,5 +1,5 @@
 "use client";
-// 위쪽 메뉴 줄: 왼쪽 「메뉴」(왼쪽에서 미끄러져 나오는 창), 가운데 REGI-CHECK(첫 화면으로), 오른쪽 점 + 버튼. (디자인 문서, 2026-11-13)
+// 위쪽 메뉴 줄: 왼쪽 「메뉴」(왼쪽에서 미끄러져 나오는 창), 가운데 LEGAL VERIFY(첫 화면으로, 2026-11-19 사이트 이름 변경), 오른쪽 점 + 버튼. (디자인 문서, 2026-11-13)
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowIcon } from "@/components/ChamferButton";
@@ -14,7 +14,7 @@ interface Props {
   onLink: (id: string) => void;
   /** 오른쪽 버튼 */
   action: { label: string; onClick: () => void };
-  /** 가운데 REGI-CHECK를 누르면 첫 화면으로 */
+  /** 가운데 LEGAL VERIFY를 누르면 첫 화면으로 */
   onHome: () => void;
 }
 
@@ -54,14 +54,14 @@ export default function Navbar({ links, onLink, action, onHome }: Props) {
         <Link
           href="/"
           className="nav__brand"
-          aria-label="REGI-CHECK 처음 화면"
+          aria-label="LEGAL VERIFY 법무정합성 검증시스템 처음 화면"
           onClick={(e) => {
             // 같은 주소라 이동이 일어나지 않으므로 화면 상태를 직접 첫 화면으로 되돌린다
             e.preventDefault();
             onHome();
           }}
         >
-          REGI-CHECK
+          LEGAL VERIFY
         </Link>
 
         <button className="nav__item" onClick={action.onClick}>
@@ -96,7 +96,7 @@ export default function Navbar({ links, onLink, action, onHome }: Props) {
             ))}
           </div>
           <div className="menu__foot">
-            <span className="menu__footLabel">REGI-CHECK · REAL ESTATE REGISTRATION DOCUMENT CHECK</span>
+            <span className="menu__footLabel">LEGAL VERIFY · 법무정합성 검증시스템</span>
             <span className="menu__mail break-keep">한국자산관리공사 서울동부지역본부 유주연 차장</span>
           </div>
         </div>
