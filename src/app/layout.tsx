@@ -9,7 +9,7 @@ import "./globals.css";
 const notoSansKr = Noto_Sans_KR({ variable: "--font-noto-sans-kr", subsets: ["latin"], preload: false });
 
 export const metadata: Metadata = {
-  title: "근이전 신청서류 정합성 자동검증 시스템",
+  title: "LEGAL VERIFY · 법무정합성 검증시스템",
   description: "근저당권 이전등기 신청서(한글)와 등기부등본을 항목별로 대조합니다.",
 };
 
