@@ -1,14 +1,14 @@
 "use client";
 // 사이트 첫 화면: 큰 제목 LEGAL VERIFY / 법무정합성 검증시스템, 검증 메뉴로 들어가는 버튼, 오른쪽 아래 유리 카드(검증 메뉴 안내).
-// 근이전 서류 검증·비용 청구 검증은 메뉴에서 들어간다 (2026-11-20 사용자 결정). 배치는 근이전 첫 화면(Hero)과 같다.
+// 근이전 검증·비용 검증 두 메뉴로 들어간다 (2026-11-20 사용자 결정). 배치는 근이전 첫 화면(Hero)과 같다.
 import ChamferButton from "@/components/ChamferButton";
 import GlassCard from "@/components/GlassCard";
 
 /** 사이트 안의 검증 메뉴. 위쪽 메뉴 창과 이 화면 카드가 같은 목록을 쓴다 */
 export type ToolId = "regi" | "cost";
 export const TOOLS: { id: ToolId; label: string; text: string }[] = [
-  { id: "regi", label: "근이전 서류 검증", text: "근저당권 이전등기 신청서류(한글 파일)를 등기부등본 PDF와 항목별로 대조합니다." },
-  { id: "cost", label: "비용 청구 검증", text: "법무사 비용 청구서(엑셀)의 금액을 첨부 영수증(PDF)과 대조합니다. 준비 중입니다." },
+  { id: "regi", label: "근이전 검증", text: "근저당권 이전등기 신청서류(한글 파일)를 등기부등본 PDF와 항목별로 대조합니다." },
+  { id: "cost", label: "비용 검증", text: "법무사 비용 청구서 PDF의 청구금액을 영수증 스캔 PDF의 납부금액과 항목별로 대조합니다." },
 ];
 
 interface Props {
@@ -20,16 +20,20 @@ export default function SiteHome({ onOpen }: Props) {
   return (
     <section className="hero-bottom">
       <div className="lede">
-        <h1 className="lede__title break-keep">
-          LEGAL VERIFY
-          <br />
-          법무정합성 검증시스템
+        {/* 위계: LEGAL VERIFY가 가장 크고, 바로 아래 한글 이름을 조금 작게 (2026-11-20 지시서) */}
+        <h1 className="break-keep">
+          <span className="site-title">LEGAL VERIFY</span>
+          <span className="site-subtitle">법무정합성 검증시스템</span>
         </h1>
         <p className="lede__body break-keep">한 글자도 놓치지 않는 서류 대조. 법무 서류를 원본 서류와 항목별로 대조해 틀린 곳을 찾아 줍니다.</p>
 
-        <ChamferButton onClick={() => onOpen("regi")} className="mt-6 md:mt-8">
-          근이전 서류 검증
-        </ChamferButton>
+        <div className="mt-6 flex flex-col gap-3 md:mt-8">
+          {TOOLS.map((t) => (
+            <ChamferButton key={t.id} onClick={() => onOpen(t.id)}>
+              {t.label}
+            </ChamferButton>
+          ))}
+        </div>
 
         {/* 소속·이름 표시 */}
         <p className="lede__credit break-keep max-md:mt-6">한국자산관리공사 서울동부지역본부 유주연 차장</p>

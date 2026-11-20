@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import BackgroundVideo from "@/components/BackgroundVideo";
 import ChamferButton from "@/components/ChamferButton";
-import CostPending from "@/components/CostPending";
+import CostVerifier from "@/components/CostVerifier";
 import Hero from "@/components/Hero";
 import InfoModal, { type InfoTopic } from "@/components/InfoModal";
 import Navbar, { type NavLink } from "@/components/Navbar";
@@ -384,12 +384,13 @@ export default function Verifier() {
   const [info, setInfo] = useState<InfoTopic | null>(null);
   const closeInfo = useCallback(() => setInfo(null), []);
   const showHero = rows.length === 0 && !history;
+  const heroLayout = showHero && view !== "cost";
   const hasWork = rows.length > 0 || history;
   const historyDetailItem = historyDetail ? stored.get(historyDetail) : undefined;
 
   return (
     <main
-      className={`relative flex min-h-dvh flex-col ${showHero ? "md:h-dvh md:overflow-hidden" : ""}`}
+      className={`relative flex min-h-dvh flex-col ${heroLayout ? "md:h-dvh md:overflow-hidden" : ""}`}
       onDragOver={(e) => {
         // 근이전 검증 화면에서만 폴더를 받는다. 다른 화면에서도 기본 동작(파일 열기)은 막는다 (2026-11-20)
         e.preventDefault();
@@ -454,9 +455,20 @@ export default function Verifier() {
             setView("regi");
           } else setInfo(id as InfoTopic);
         }}
-        action={hasWork ? { label: "새 검증 시작", onClick: reset } : { label: "검증 기준", onClick: () => setInfo("rules") }}
+        action={
+          view === "cost" ? { label: "메인 화면", onClick: goHome } : hasWork ? { label: "새 검증 시작", onClick: reset } : { label: "검증 기준", onClick: () => setInfo("rules") }
+        }
         onHome={goHome}
       />
+
+      {/* 각 검증 화면에서 메인 화면으로 (2026-11-20 지시서) */}
+      {view !== "home" && (
+        <div className="relative z-10 px-5 pb-2 sm:px-6 md:px-12">
+          <button onClick={goHome} className="inline-flex items-center gap-1.5 text-sm text-black/70 transition-opacity duration-300 hover:opacity-60">
+            <ArrowLeft size={14} strokeWidth={1.5} aria-hidden /> 메인 화면
+          </button>
+        </div>
+      )}
 
       {showHero && view === "home" ? (
         <SiteHome
@@ -465,9 +477,7 @@ export default function Verifier() {
             window.scrollTo({ top: 0 });
           }}
         />
-      ) : showHero && view === "cost" ? (
-        <CostPending onHome={goHome} />
-      ) : showHero ? (
+      ) : view === "cost" ? null : showHero ? (
         <Hero
           dragging={dragging}
           storedCount={stored.size}
@@ -608,6 +618,11 @@ export default function Verifier() {
           )}
         </div>
       )}
+
+      {/* 비용 검증 화면은 늘 붙여 두고 숨기기만 한다(다른 메뉴에 다녀와도 결과·진행이 남게). pdf.js는 파일을 고를 때만 불러온다 */}
+      <div hidden={view !== "cost"}>
+        <CostVerifier />
+      </div>
 
       <InfoModal topic={info} onClose={closeInfo} />
       <UploadModal
