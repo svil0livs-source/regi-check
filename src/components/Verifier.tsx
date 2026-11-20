@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import BackgroundVideo from "@/components/BackgroundVideo";
 import ChamferButton from "@/components/ChamferButton";
+import CostPending from "@/components/CostPending";
 import Hero from "@/components/Hero";
 import InfoModal, { type InfoTopic } from "@/components/InfoModal";
 import Navbar, { type NavLink } from "@/components/Navbar";
+import SiteHome, { TOOLS, type ToolId } from "@/components/SiteHome";
 import UploadModal from "@/components/UploadModal";
 import { checkFolders, type CaseCheck } from "@/lib/upload/checkFolders";
 import { fromDataTransfer, fromFileList, type PickedFile } from "@/lib/upload/collectFiles";
@@ -205,7 +207,9 @@ const signatureOf = (hwp: File | undefined, pdfs: (File | undefined)[]) =>
     ? [`${hwp.size}:${hwp.lastModified}`, ...pdfs.map((p) => `${p!.size}:${p!.lastModified}`), `v${process.env.NEXT_PUBLIC_BUILD_STAMP ?? ""}`].join("|")
     : "";
 
+// 검증 메뉴(근이전·비용 청구)가 먼저, 근이전 검증의 이전 결과·기준·개인정보가 뒤 (2026-11-20)
 const NAV_LINKS: NavLink[] = [
+  ...TOOLS.map((t) => ({ id: t.id, label: t.label })),
   { id: "history", label: "이전 결과" },
   { id: "rules", label: "검증 기준" },
   { id: "privacy", label: "개인정보" },
@@ -229,6 +233,8 @@ export default function Verifier() {
   const [stored, setStored] = useState<Map<string, StoredOutcome>>(new Map());
   const [dragging, setDragging] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  /** 사이트 첫 화면(home) 또는 검증 메뉴 화면 (2026-11-20) */
+  const [view, setView] = useState<"home" | ToolId>("home");
   /** 「이전 결과」 화면을 보는 중, 그리고 거기서 상세를 연 폴더 이름 */
   const [history, setHistory] = useState(false);
   const [historyDetail, setHistoryDetail] = useState<string | null>(null);
@@ -343,6 +349,7 @@ export default function Verifier() {
     if (running && !window.confirm("처리 중인 검증을 멈추고 첫 화면으로 갈까요? 끝난 건의 결과는 「이전 결과」에 남습니다.")) return;
     setInfo(null);
     void reset();
+    setView("home");
     window.scrollTo({ top: 0 });
   }
 
@@ -384,8 +391,9 @@ export default function Verifier() {
     <main
       className={`relative flex min-h-dvh flex-col ${showHero ? "md:h-dvh md:overflow-hidden" : ""}`}
       onDragOver={(e) => {
+        // 근이전 검증 화면에서만 폴더를 받는다. 다른 화면에서도 기본 동작(파일 열기)은 막는다 (2026-11-20)
         e.preventDefault();
-        setDragging(true);
+        if (view === "regi") setDragging(true);
       }}
       onDragLeave={(e) => {
         // 창 밖으로 나가면 relatedTarget이 없다 → 안내를 닫는다 (CHECK 14번)
@@ -394,6 +402,7 @@ export default function Verifier() {
       onDrop={async (e) => {
         e.preventDefault();
         setDragging(false);
+        if (view !== "regi") return;
         if (running) {
           setBlocking("검증하는 중에는 폴더를 새로 올릴 수 없습니다. 끝난 뒤(또는 「새 검증 시작」 뒤) 다시 올려 주세요.");
           return;
@@ -432,12 +441,33 @@ export default function Verifier() {
 
       <Navbar
         links={NAV_LINKS}
-        onLink={(id) => (id === "history" ? (setHistory(true), setHistoryDetail(null)) : setInfo(id as InfoTopic))}
+        onLink={(id) => {
+          if (id === "regi" || id === "cost") {
+            // 근이전 결과를 보는 중이면 결과 화면 그대로, 아니면 그 메뉴의 첫 화면으로
+            setHistory(false);
+            setHistoryDetail(null);
+            setView(id);
+            window.scrollTo({ top: 0 });
+          } else if (id === "history") {
+            setHistory(true);
+            setHistoryDetail(null);
+            setView("regi");
+          } else setInfo(id as InfoTopic);
+        }}
         action={hasWork ? { label: "새 검증 시작", onClick: reset } : { label: "검증 기준", onClick: () => setInfo("rules") }}
         onHome={goHome}
       />
 
-      {showHero ? (
+      {showHero && view === "home" ? (
+        <SiteHome
+          onOpen={(id) => {
+            setView(id);
+            window.scrollTo({ top: 0 });
+          }}
+        />
+      ) : showHero && view === "cost" ? (
+        <CostPending onHome={goHome} />
+      ) : showHero ? (
         <Hero
           dragging={dragging}
           storedCount={stored.size}
