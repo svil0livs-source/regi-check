@@ -150,6 +150,27 @@ body {
   letter-spacing: -0.025em;
   color: #000;
 }
+/* 사이트 첫 화면 이름: LEGAL VERIFY가 가장 크고, 한글 이름은 그 아래 조금 작게 (2026-11-20) */
+.site-title {
+  display: block;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: 0.02em;
+  color: #000;
+}
+.site-subtitle {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: rgba(0, 0, 0, 0.8);
+}
+@media (min-width: 768px) {
+  .site-title { font-size: 52px; }
+  .site-subtitle { font-size: 22px; }
+}
 .lede__body {
   margin-top: 0.75rem;
   max-width: 280px;
