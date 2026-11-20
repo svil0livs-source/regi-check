@@ -1,20 +1,35 @@
 "use client";
-// 비용 청구 검증 화면 (2026-11-20 사용자 지시서): 법무사 비용 청구서 PDF 1개 + 영수증 전체 스캔 PDF 1개를 올려
+// 비용 청구 검증 화면 (2026-11-20 사용자 지시서): 법무사 비용 청구서(엑셀 또는 PDF) 1개 + 영수증 전체 스캔 PDF 1개를 올려
 // 모든 페이지를 읽고, 청구 항목과 영수증 금액을 항목 종류별로 대조한다. 근이전 검증과 상태·코드를 함께 쓰지 않는다.
 // 파일과 읽은 값은 이 브라우저 메모리에만 있고, 스캔 페이지 사진만 서버(/api/cost/read)에 보내 글자를 읽는다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileText, X } from "lucide-react";
 import ChamferButton from "@/components/ChamferButton";
 import { isTextPage, openPdf, pageTextLines, renderForOcr, renderPreview, type PdfDoc } from "@/lib/cost/browserPdf";
+import { assignCostFiles } from "@/lib/cost/assign";
 import { compareCosts } from "@/lib/cost/compare";
+import { cellText, ExcelReadError, isExcelName, parseClaimSheets, readWorkbook, type Sheet } from "@/lib/cost/excel";
 import { CATEGORY_LABELS, mergeClaimPages, parseClaimLines, parseReceiptPage } from "@/lib/cost/parse";
 import { filters, selectPageImages } from "@/lib/readers/pdfPages";
 import type { ParseLine } from "@/lib/readers/registryParse";
+import { fromDataTransfer } from "@/lib/upload/collectFiles";
 import { COST_STATUS_LABELS, type ClaimRead, type CostResult, type CostStatus, type PageRead, type Receipt } from "@/lib/cost/types";
 
 type Kind = "claim" | "receipt";
 /** scans: 페이지(1부터)마다 스캔 원본 JPEG (사진 한 장짜리 페이지만). 있으면 다시 그리지 않고 원본을 보낸다(다시 그리면 글자가 흐려짐) */
-type Loaded = { file: File; doc: PdfDoc; pages: number; thumbs: string[]; scans: Map<number, Blob> };
+type PdfLoaded = { type: "pdf"; file: File; doc: PdfDoc; pages: number; thumbs: string[]; scans: Map<number, Blob> };
+/** 엑셀 청구서: 보이는 시트의 칸 값 (브라우저에서만 읽는다) */
+type ExcelLoaded = { type: "excel"; file: File; sheets: Sheet[] };
+type Loaded = PdfLoaded | ExcelLoaded;
+const isPdfFile = (f: File) => /\.pdf$/i.test(f.name) || f.type === "application/pdf";
+
+const isSameDoc = (f: Loaded | undefined, doc: PdfDoc) => f?.type === "pdf" && f.doc === doc;
+
+function release(f: Loaded | undefined) {
+  if (f?.type !== "pdf") return;
+  f.thumbs.forEach((u) => URL.revokeObjectURL(u));
+  void f.doc.destroy();
+}
 
 /** 페이지에 사진이 한 장뿐이고 JPEG 하나로만 압축됐으면 그 원본 (요청 한도 안일 때만) */
 function scanJpegs(bytes: Uint8Array): Map<number, Blob> {
@@ -74,7 +89,7 @@ export default function CostVerifier() {
   const [claim, setClaim] = useState<ClaimRead | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [result, setResult] = useState<CostResult | null>(null);
-  const [viewer, setViewer] = useState<{ kind: Kind; page: number } | null>(null);
+  const [viewer, setViewer] = useState<{ kind: Kind; page: number; row?: number } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const filesRef = useRef(files);
   useEffect(() => {
@@ -85,16 +100,44 @@ export default function CostVerifier() {
   useEffect(
     () => () => {
       abortRef.current?.abort();
-      for (const f of Object.values(filesRef.current)) f?.thumbs.forEach((u) => URL.revokeObjectURL(u));
+      for (const f of Object.values(filesRef.current)) if (f?.type === "pdf") f.thumbs.forEach((u) => URL.revokeObjectURL(u));
     },
     [],
   );
 
-  async function pick(kind: Kind, file: File | undefined) {
+  /** 여러 파일을 한꺼번에 올림: 청구서·영수증으로 나눠 각 칸에 넣는다 */
+  async function pickMany(list: File[]) {
+    if (running || list.length === 0) return;
+    if (list.length === 1) {
+      const one = list[0];
+      // 파일 하나: 엑셀이거나 이름에 「청구」 등이 있으면 청구서, 아니면 영수증
+      const a = assignCostFiles([one]);
+      return pick(a.claim ? "claim" : "receipt", one);
+    }
+    const a = assignCostFiles(list);
+    if (a.claim) await pick("claim", a.claim, true);
+    if (a.receipt) await pick("receipt", a.receipt, true);
+    setFileError(a.error ?? null);
+  }
+
+  async function pick(kind: Kind, file: File | undefined, keepError = false) {
     if (!file || running) return;
-    setFileError(null);
-    if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
-      setFileError(`${KIND_LABEL[kind]}는 PDF 파일만 올릴 수 있습니다. (${file.name})`);
+    if (!keepError) setFileError(null);
+    if (kind === "claim" && isExcelName(file.name)) {
+      let sheets: Sheet[];
+      try {
+        sheets = readWorkbook(new Uint8Array(await file.arrayBuffer()));
+      } catch (e) {
+        setFileError(`${file.name}: ${e instanceof ExcelReadError ? e.message : "엑셀 파일을 열지 못했습니다."} 암호가 걸렸거나 손상된 파일인지 확인해 주세요.`);
+        return;
+      }
+      release(files.claim);
+      setResult(null);
+      setFiles((f) => ({ ...f, claim: { type: "excel", file, sheets } }));
+      return;
+    }
+    if (!isPdfFile(file)) {
+      setFileError(kind === "claim" ? `청구서는 엑셀(.xlsx, .xls)이나 PDF 파일만 올릴 수 있습니다. (${file.name})` : `영수증은 PDF 파일만 올릴 수 있습니다. (${file.name})`);
       return;
     }
     let doc: PdfDoc;
@@ -104,11 +147,9 @@ export default function CostVerifier() {
       setFileError(`${file.name}을(를) PDF로 열지 못했습니다. 암호가 걸렸거나 손상된 파일인지 확인해 주세요.`);
       return;
     }
-    const old = files[kind];
-    old?.thumbs.forEach((u) => URL.revokeObjectURL(u));
-    void old?.doc.destroy();
+    release(files[kind]);
     setResult(null);
-    const loaded: Loaded = { file, doc, pages: doc.numPages, thumbs: [], scans: scanJpegs(new Uint8Array(await file.arrayBuffer())) };
+    const loaded: PdfLoaded = { type: "pdf", file, doc, pages: doc.numPages, thumbs: [], scans: scanJpegs(new Uint8Array(await file.arrayBuffer())) };
     setFiles((f) => ({ ...f, [kind]: loaded }));
     // 미리보기 그림은 하나씩 그려 붙인다
     for (let n = 1; n <= Math.min(doc.numPages, THUMB_MAX); n++) {
@@ -116,12 +157,12 @@ export default function CostVerifier() {
         const url = await renderPreview(doc, n, 180);
         loaded.thumbs.push(url);
         // 그 사이 다른 파일로 바꿨으면 붙이지 않는다 (같은 PDF인지는 doc으로 본다)
-        setFiles((f) => (f[kind]?.doc === doc ? { ...f, [kind]: { ...loaded, thumbs: [...loaded.thumbs] } } : f));
+        setFiles((f) => (isSameDoc(f[kind], doc) ? { ...f, [kind]: { ...loaded, thumbs: [...loaded.thumbs] } } : f));
       } catch {
         break;
       }
       // 다른 파일로 바뀌었으면 그만 그린다
-      if (filesRef.current[kind] && filesRef.current[kind]?.doc !== doc) break;
+      if (filesRef.current[kind] && !isSameDoc(filesRef.current[kind], doc)) break;
     }
   }
 
@@ -139,7 +180,14 @@ export default function CostVerifier() {
     const claimReads: ClaimRead[] = [];
     const allReceipts: Receipt[] = [];
     try {
+      if (c.type === "excel") {
+        // 엑셀 청구서: 칸 값을 바로 읽는다 (글자 읽기 없음)
+        const read = parseClaimSheets(c.sheets);
+        claimReads.push(read.claim);
+        pageReads.claim.push(...read.pages);
+      }
       for (const [kind, loaded] of [["claim", c], ["receipt", r]] as const) {
+        if (loaded.type !== "pdf") continue;
         for (let n = 1; n <= loaded.pages; n++) {
           if (ctrl.signal.aborted) throw new DOMException("취소", "AbortError");
           let lines: ParseLine[];
@@ -204,10 +252,7 @@ export default function CostVerifier() {
 
   function resetAll() {
     abortRef.current?.abort();
-    for (const f of Object.values(files)) {
-      f?.thumbs.forEach((u) => URL.revokeObjectURL(u));
-      void f?.doc.destroy();
-    }
+    for (const f of Object.values(files)) release(f);
     setFiles({});
     setResult(null);
     setClaim(null);
@@ -218,6 +263,8 @@ export default function CostVerifier() {
   function openOriginal(kind: Kind) {
     const f = files[kind];
     if (!f) return;
+    // 엑셀은 브라우저 새 창에서 열리지 않으므로 시트 보기로 연다
+    if (f.type === "excel") return setViewer({ kind, page: 1 });
     const url = URL.createObjectURL(f.file);
     window.open(url, "_blank", "noopener");
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -233,7 +280,7 @@ export default function CostVerifier() {
             <p className="eyebrow">비용 검증시스템</p>
             <h1 className="display mt-2 text-3xl sm:text-4xl">비용 청구 검증</h1>
             <p className="mt-2 max-w-xl break-keep text-sm text-black/60">
-              법무사 비용 청구서 PDF와 영수증 전체 스캔 PDF를 올리면 모든 페이지를 읽어 항목별 청구금액과 영수증 금액을 대조합니다. 법무사 보수는 영수증과 대조하지 않고 따로 보여 줍니다.
+              법무사 비용 청구서(엑셀 또는 PDF)와 영수증 전체 스캔 PDF를 올리면 모든 칸과 페이지를 읽어 항목별 청구금액과 영수증 금액을 대조합니다. 법무사 보수는 영수증과 대조하지 않고 따로 보여 줍니다.
             </p>
           </div>
           {(ready || result) && !running && (
@@ -243,16 +290,20 @@ export default function CostVerifier() {
           )}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <BothDrop disabled={running} onFiles={(list) => void pickMany(list)} />
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
           {(["claim", "receipt"] as const).map((kind, i) => (
             <FileSlot
               key={kind}
               step={i + 1}
-              title={kind === "claim" ? "법무사 비용 청구서 PDF" : "영수증 전체 스캔 PDF"}
-              hint={kind === "claim" ? "청구서 1개 (여러 쪽이어도 됩니다)" : "여러 장의 영수증을 한 PDF로 스캔한 파일 1개"}
+              title={kind === "claim" ? "법무사 비용 청구서 (엑셀 또는 PDF)" : "영수증 전체 스캔 PDF"}
+              hint={kind === "claim" ? "청구서 1개 (.xlsx, .xls 또는 PDF)" : "여러 장의 영수증을 한 PDF로 스캔한 파일 1개"}
+              accept={kind === "claim" ? CLAIM_ACCEPT : "application/pdf,.pdf"}
               loaded={files[kind]}
               disabled={running}
               onPick={(f) => pick(kind, f)}
+              onPickMany={(list) => void pickMany(list)}
               onView={(page) => setViewer({ kind, page })}
             />
           ))}
@@ -288,15 +339,26 @@ export default function CostVerifier() {
           result={result}
           claim={claim}
           receipts={receipts}
-          onView={(kind, page) => setViewer({ kind, page })}
+          onView={(kind, page, row) => setViewer({ kind, page, row })}
           onOriginal={openOriginal}
         />
       )}
 
-      {viewer && files[viewer.kind] && (
+      {viewer && files[viewer.kind]?.type === "excel" && (
+        <SheetViewer
+          loaded={files[viewer.kind] as ExcelLoaded}
+          sheetIndex={viewer.page - 1}
+          row={viewer.row}
+          claim={claim?.items ?? []}
+          onSheet={(page) => setViewer({ kind: viewer.kind, page })}
+          onClose={() => setViewer(null)}
+        />
+      )}
+
+      {viewer && files[viewer.kind]?.type === "pdf" && (
         <PageViewer
           kind={viewer.kind}
-          loaded={files[viewer.kind]!}
+          loaded={files[viewer.kind] as PdfLoaded}
           page={viewer.page}
           receipts={viewer.kind === "receipt" ? receipts.filter((r) => r.page === viewer.page) : []}
           claim={viewer.kind === "claim" && claim ? claim.items.filter((i) => i.page === viewer.page) : []}
@@ -308,21 +370,73 @@ export default function CostVerifier() {
   );
 }
 
+const CLAIM_ACCEPT = ".xlsx,.xls,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/pdf,.pdf";
+
+/** 두 파일(또는 폴더)을 한꺼번에 올리는 곳: 청구서·영수증을 알아서 나눈다 */
+function BothDrop({ disabled, onFiles }: { disabled: boolean; onFiles: (list: File[]) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  return (
+    <div
+      className={`flex flex-col items-start gap-3 border border-dashed px-4 py-4 sm:flex-row sm:items-center transition-colors ${over ? "border-black bg-white/80" : "border-black/30 bg-white/40"}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={async (e) => {
+        e.preventDefault();
+        setOver(false);
+        if (disabled) return;
+        // 폴더를 끌어다 놓아도 안의 파일을 모은다
+        const picked = await fromDataTransfer(e.dataTransfer).catch(() => []);
+        onFiles(picked.length ? picked.map((p) => p.file) : Array.from(e.dataTransfer.files));
+      }}
+    >
+      <input
+        ref={input}
+        type="file"
+        multiple
+        accept={CLAIM_ACCEPT}
+        hidden
+        onChange={(e) => {
+          onFiles(Array.from(e.target.files ?? []));
+          e.target.value = "";
+        }}
+      />
+      <button
+        disabled={disabled}
+        onClick={() => input.current?.click()}
+        className="shrink-0 border border-black bg-black px-4 py-2 text-sm text-white transition-opacity duration-300 hover:opacity-70 disabled:opacity-40"
+      >
+        두 파일 한꺼번에 올리기
+      </button>
+      <p className="min-w-0 break-keep text-sm text-black/60 sm:flex-1">
+        청구서와 영수증 PDF를 함께 고르거나, 두 파일(또는 두 파일이 든 폴더)을 여기에 끌어다 놓으세요. 엑셀은 청구서 칸, PDF는 영수증 칸에 들어갑니다. 청구서도 PDF면 파일 이름(청구·영수)으로 나눕니다.
+      </p>
+    </div>
+  );
+}
+
 function FileSlot({
   step,
   title,
   hint,
+  accept,
   loaded,
   disabled,
   onPick,
+  onPickMany,
   onView,
 }: {
   step: number;
   title: string;
   hint: string;
+  accept: string;
   loaded?: Loaded;
   disabled: boolean;
   onPick: (f: File | undefined) => void;
+  onPickMany: (list: File[]) => void;
   onView: (page: number) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -340,20 +454,23 @@ function FileSlot({
         e.preventDefault();
         e.stopPropagation();
         setOver(false);
-        if (!disabled) onPick(e.dataTransfer.files[0]);
+        if (disabled) return;
+        // 파일 여러 개를 이 칸에 놓으면 한꺼번에 올리기로 나눈다
+        if (e.dataTransfer.files.length > 1) onPickMany(Array.from(e.dataTransfer.files));
+        else onPick(e.dataTransfer.files[0]);
       }}
     >
       <p className="text-xs text-black/50">{`STEP ${step}`}</p>
       <h2 className="mt-1 text-base font-semibold">{title}</h2>
       <p className="mt-1 break-keep text-xs text-black/60">{hint}</p>
-      <input ref={input} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => (onPick(e.target.files?.[0]), (e.target.value = ""))} />
+      <input ref={input} type="file" accept={accept} hidden onChange={(e) => (onPick(e.target.files?.[0]), (e.target.value = ""))} />
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           disabled={disabled}
           onClick={() => input.current?.click()}
           className="border border-black px-3 py-1.5 text-sm transition-opacity duration-300 hover:opacity-60 disabled:opacity-40"
         >
-          {loaded ? "다른 파일" : "PDF 선택"}
+          {loaded ? "다른 파일" : "파일 선택"}
         </button>
         {loaded ? (
           <span className="flex min-w-0 items-center gap-1.5 text-sm">
@@ -361,13 +478,23 @@ function FileSlot({
             <span className="truncate font-medium" title={loaded.file.name}>
               {loaded.file.name}
             </span>
-            <span className="shrink-0 text-black/50">· {loaded.pages}쪽</span>
+            <span className="shrink-0 text-black/50">· {loaded.type === "pdf" ? `${loaded.pages}쪽` : `엑셀 시트 ${loaded.sheets.length}개`}</span>
           </span>
         ) : (
           <span className="text-sm text-black/40">또는 여기에 끌어다 놓기</span>
         )}
       </div>
-      {loaded && (
+      {loaded?.type === "excel" && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {loaded.sheets.map((sh, i) => (
+            <button key={i} onClick={() => onView(i + 1)} className="border border-black/20 bg-white px-3 py-1.5 text-sm transition-opacity hover:opacity-70" title={`${sh.name} 시트 보기`}>
+              {sh.name} <span className="text-black/50">· {sh.rows.length}행</span>
+            </button>
+          ))}
+          {loaded.sheets.length === 0 && <span className="text-sm text-red-700">보이는 시트가 없습니다.</span>}
+        </div>
+      )}
+      {loaded?.type === "pdf" && (
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label={`${title} 미리보기`}>
           {loaded.thumbs.map((url, i) => (
             <button key={url} onClick={() => onView(i + 1)} className="shrink-0 border border-black/15 bg-white transition-opacity hover:opacity-70" title={`${i + 1}쪽 크게 보기`}>
@@ -385,10 +512,10 @@ function FileSlot({
   );
 }
 
-function PageLink({ page, onClick }: { page: number; onClick: () => void }) {
+function PageLink({ page, row, onClick }: { page: number; row?: number; onClick: () => void }) {
   return (
     <button onClick={onClick} className="whitespace-nowrap rounded text-sm text-black underline underline-offset-4 transition-opacity duration-300 hover:opacity-60">
-      PDF {page}쪽
+      {row ? `엑셀 ${row}행` : `PDF ${page}쪽`}
     </button>
   );
 }
@@ -403,7 +530,7 @@ function Results({
   result: CostResult;
   claim: ClaimRead;
   receipts: Receipt[];
-  onView: (kind: Kind, page: number) => void;
+  onView: (kind: Kind, page: number, row?: number) => void;
   onOriginal: (kind: Kind) => void;
 }) {
   const t = result.totals;
@@ -605,7 +732,7 @@ function Results({
                   {won(it.amount.value)}
                   {it.amount.uncertain && " ?"}
                 </span>
-                <PageLink page={it.page} onClick={() => onView("claim", it.page)} />
+                <PageLink page={it.page} row={it.row} onClick={() => onView("claim", it.page, it.row)} />
               </span>
             </li>
           ))}
@@ -632,7 +759,7 @@ function PageViewer({
   onClose,
 }: {
   kind: Kind;
-  loaded: Loaded;
+  loaded: PdfLoaded;
   page: number;
   receipts: Receipt[];
   claim: ClaimRead["items"];
@@ -737,6 +864,89 @@ function PageViewer({
             ))
           )}
         </aside>
+      </div>
+    </div>
+  );
+}
+
+/** 엑셀 청구서 시트 보기: 칸 값을 표로 보여 주고, 청구 항목으로 읽은 행을 표시한다 */
+function SheetViewer({
+  loaded,
+  sheetIndex,
+  row,
+  claim,
+  onSheet,
+  onClose,
+}: {
+  loaded: ExcelLoaded;
+  sheetIndex: number;
+  row?: number;
+  claim: ClaimRead["items"];
+  onSheet: (page: number) => void;
+  onClose: () => void;
+}) {
+  const sheet = loaded.sheets[sheetIndex];
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  const readRows = new Map(claim.filter((i) => i.page === sheetIndex + 1 && i.row).map((i) => [i.row!, i]));
+  const width = Math.max(1, ...(sheet?.rows.map((r) => r.length) ?? [1]));
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  useEffect(() => {
+    rowRef.current?.scrollIntoView({ block: "center" });
+  }, [row, sheetIndex]);
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label={`비용 청구서 ${sheet?.name ?? ""} 시트`} className="fixed inset-0 z-50 flex flex-col bg-black/60 backdrop-blur-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-[#f5f4f0] px-4 py-3 text-sm">
+        <span className="min-w-0 truncate">
+          <b className="font-semibold">비용 청구서</b> · {loaded.file.name}
+        </span>
+        <span className="flex flex-wrap items-center gap-2">
+          {loaded.sheets.length > 1 &&
+            loaded.sheets.map((sh, i) => (
+              <button key={i} onClick={() => onSheet(i + 1)} className={`border px-2 py-1 ${i === sheetIndex ? "border-black bg-black text-white" : "border-black/30"}`}>
+                {sh.name}
+              </button>
+            ))}
+          <button ref={closeRef} onClick={onClose} className="flex items-center gap-1 border border-black px-2 py-1">
+            <X size={14} aria-hidden /> 닫기
+          </button>
+        </span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-4" onClick={(e) => e.target === e.currentTarget && onClose()}>
+        {!sheet || sheet.rows.length === 0 ? (
+          <p className="py-20 text-center text-white">빈 시트입니다.</p>
+        ) : (
+          <table className="mx-auto border-collapse bg-white text-sm shadow">
+            <tbody>
+              {sheet.rows.map((cells, ri) => {
+                const item = readRows.get(ri + 1);
+                return (
+                  <tr key={ri} ref={row === ri + 1 ? rowRef : undefined} className={row === ri + 1 ? "bg-amber-100" : item ? "bg-emerald-50" : ""}>
+                    <th className="sticky left-0 border border-black/10 bg-[#f5f4f0] px-2 py-1 text-right text-xs font-normal text-black/50">{ri + 1}</th>
+                    {Array.from({ length: width }, (_, ci) => {
+                      const v = cells[ci] ?? null;
+                      return (
+                        <td key={ci} className={`whitespace-nowrap border border-black/10 px-2 py-1 ${typeof v === "number" ? "text-right tabular-nums" : ""}`}>
+                          {cellText(v)}
+                        </td>
+                      );
+                    })}
+                    <td className="whitespace-nowrap px-2 py-1 text-xs text-emerald-800">{item ? `→ ${CATEGORY_LABELS[item.category]} ${won(item.amount.value)}` : ""}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

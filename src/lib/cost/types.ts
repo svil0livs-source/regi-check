@@ -26,8 +26,11 @@ export interface ClaimItem {
   label: string;
   category: CostCategory;
   amount: CostAmount;
-  /** 청구서 PDF 페이지 (1부터) */
+  /** 청구서 PDF 페이지 (1부터). 엑셀 청구서는 시트 순서(1부터) */
   page: number;
+  /** 엑셀 청구서에서 읽은 항목이면 시트 이름과 행 번호(1부터, 엑셀 화면의 행 번호) */
+  sheet?: string;
+  row?: number;
 }
 
 export interface ClaimRead {
