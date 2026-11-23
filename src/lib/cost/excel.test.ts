@@ -52,7 +52,7 @@ describe("엑셀 청구서 읽기", () => {
     const { claim } = parseClaimSheets(sheets);
     expect(claim.items.map((i) => [i.category, i.amount.value, i.row])).toEqual([
       ["stamp_tax", 18000, 2],
-      ["postage", 5200, 3],
+      ["court_service", 5200, 3],
     ]);
   });
 

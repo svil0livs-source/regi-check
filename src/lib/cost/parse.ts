@@ -17,7 +17,10 @@ const CATEGORY_RULES: [CostCategory, RegExp][] = [
   ["court_fee", /등기신청수수료|신청수수료|수입증지|등기수수료|증지|등기신청/],
   ["stamp_tax", /인지세|수입인지|전자수입인지|인지대|인지/],
   ["certificate", /제증명|증명서|등본|초본|열람|발급수수료|발급비|발급/],
-  ["postage", /우편|송달|택배|퀵/],
+  ["court_service", /송달/],
+  ["deposit", /보관금|예납금|예납/],
+  ["insurance", /보증보험|보험료/],
+  ["postage", /우편|택배|퀵/],
   ["fee", /보수|부가가치세|부가세|교통비|여비|일당|출장|대행|수수료|제출대행|원인증서|작성료/],
 ];
 
@@ -28,7 +31,10 @@ export const CATEGORY_LABELS: Record<CostCategory, string> = {
   court_fee: "등기신청수수료",
   stamp_tax: "인지세",
   certificate: "제증명 발급비",
-  postage: "우편·송달료",
+  court_service: "송달료",
+  deposit: "법원 보관금",
+  insurance: "보증보험료",
+  postage: "우편료",
   fee: "법무사 보수",
   other: "기타",
 };
@@ -42,9 +48,18 @@ export function categoryOf(label: string): CostCategory {
 }
 
 // ── 금액 ─────────────────────────────────────────────────────
+/** 법원 경매 사건번호 「2026타경21089」 (금액으로 읽지 않고, 영수증이 어느 사건 것인지 찾는 데 쓴다) */
+const CASE_NO_RE = /(?:(?:19|20)\d{2}|\d{2})?\s*타\s*경\s*(\d{1,7})/g;
+
+/** 글자에서 경매 사건번호의 번호 부분들 */
+export function caseNosOf(text: string): string[] {
+  return [...new Set([...text.matchAll(CASE_NO_RE)].map((m) => String(Number(m[1]))))];
+}
+
 /** 날짜·시각·번호처럼 금액이 아닌 숫자를 지운다 (지운 자리는 띄어쓰기로) */
 function stripNonAmounts(text: string): string {
   return text
+    .replace(CASE_NO_RE, " ")
     .replace(/(19|20)\d{2}\s*[.\-/년]\s*\d{1,2}\s*[.\-/월]\s*\d{1,2}\s*[.일]?/g, " ")
     .replace(/\d{1,2}\s*:\s*\d{2}(\s*:\s*\d{2})?/g, " ")
     .replace(/번호\s*[:：]?\s*[\d\-\s]+/g, "번호 ")
@@ -297,7 +312,8 @@ export function parseReceipt(lines: ParseLine[], page: number, index: number, co
   }
   if (items.some((i) => i.amount.uncertain) || total?.uncertain) uncertain = true;
 
-  return { id: `${page}쪽-${index}`, page, index, title, issuer, ref, date, items, total, uncertain, notes };
+  const caseNos = caseNosOf(whole);
+  return { id: `${page}쪽-${index}`, page, index, title, issuer, ref, date, items, total, uncertain, notes, ...(caseNos.length ? { caseNos } : {}) };
 }
 
 /** 영수증 PDF 한 페이지 → 영수증들 */
