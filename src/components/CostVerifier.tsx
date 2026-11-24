@@ -7,6 +7,7 @@ import { FileText, X } from "lucide-react";
 import ChamferButton from "@/components/ChamferButton";
 import { isTextPage, openPdf, pageTextLines, renderForOcr, renderPreview, type PdfDoc } from "@/lib/cost/browserPdf";
 import { assignCostFiles } from "@/lib/cost/assign";
+import { compareCaseTable } from "@/lib/cost/caseCompare";
 import { compareCosts } from "@/lib/cost/compare";
 import { cellText, ExcelReadError, isExcelName, parseClaimSheets, readWorkbook, type Sheet } from "@/lib/cost/excel";
 import { CATEGORY_LABELS, mergeClaimPages, parseClaimLines, parseReceiptPage } from "@/lib/cost/parse";
@@ -237,10 +238,13 @@ export default function CostVerifier() {
           pageReads[kind].push({ page: n, source: "ocr", found, ...(error ? { error } : {}) });
         }
       }
-      const claimRead = mergeClaimPages(claimReads);
+      const table = claimReads.find((x) => x.table)?.table;
+      const claimRead = table ? { ...claimReads.find((x) => x.table)!, table } : mergeClaimPages(claimReads);
       setClaim(claimRead);
       setReceipts(allReceipts);
-      setResult(compareCosts(claimRead, allReceipts, { claim: pageReads.claim, receipts: pageReads.receipt }));
+      const pagesRead = { claim: pageReads.claim, receipts: pageReads.receipt };
+      // 엑셀이 사건별 비용표(한 줄 = 사건 한 건)면 사건마다 대조한다 (2026-11-23)
+      setResult(table ? compareCaseTable({ ...claimRead, table }, allReceipts, pagesRead) : compareCosts(claimRead, allReceipts, pagesRead));
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) setFileError("검증 중 오류가 났습니다. 다시 시도해 주세요.");
     } finally {
@@ -565,7 +569,7 @@ function Results({
           </div>
         ))}
       </dl>
-      {!t.claimedTotalFromDoc && <p className="mt-2 text-xs text-black/50">청구서에서 합계 줄을 찾지 못해 총 청구금액은 항목 금액을 더한 값입니다.</p>}
+      {!t.claimedTotalFromDoc && !result.cases && <p className="mt-2 text-xs text-black/50">청구서에서 합계 줄을 찾지 못해 총 청구금액은 항목 금액을 더한 값입니다.</p>}
       <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
         {(["match", "mismatch", "missing", "needs_review"] as const).map((s) => (
           <span key={s} className={STATUS_STYLE[s]}>
@@ -584,7 +588,9 @@ function Results({
         </ul>
       )}
 
-      <h3 className="mt-8 text-base font-semibold">항목별 대조 (실비)</h3>
+      {result.cases && <CaseTable cases={result.cases} onView={onView} />}
+
+      <h3 className="mt-8 text-base font-semibold">{result.cases ? "비용 종류별 합계" : "항목별 대조 (실비)"}</h3>
       <div className="mt-2 overflow-x-auto border-y border-black/10">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="text-xs text-black/50">
@@ -746,6 +752,61 @@ function Results({
       </details>
       <p className="mt-6 break-keep text-xs text-black/50">금액 옆 「?」는 글자 읽기가 불확실해 원본 확인이 필요한 값입니다. 결과는 이 화면에만 있고 저장되지 않습니다.</p>
     </section>
+  );
+}
+
+/** 사건별 비용표 결과: 사건 한 줄마다 결과와 문제 칸 */
+function CaseTable({ cases, onView }: { cases: NonNullable<CostResult["cases"]>; onView: (kind: Kind, page: number, row?: number) => void }) {
+  const bad = cases.filter((k) => k.summary !== "전부 일치").length;
+  return (
+    <>
+      <h3 className="mt-8 text-base font-semibold">
+        사건별 대조 <span className="text-sm font-normal text-black/55">({cases.length}건 중 {bad}건 확인할 것)</span>
+      </h3>
+      <ul className="mt-2 divide-y divide-black/10 border-y border-black/10 text-sm">
+        {cases.map((k) => {
+          const problems = k.cells.filter((c) => c.status !== "match");
+          const fee = k.fees.reduce((s, f) => s + f.amount, 0);
+          return (
+            <li key={k.sheet + k.row} className={`px-3 py-3 ${problems.length ? "bg-black/[0.02]" : ""}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-medium">{k.no}번</span>
+                  {k.debtor && <span>{k.debtor}</span>}
+                  <span className="text-black/60">
+                    {[k.court, k.caseNo && `타경 ${k.caseNo}`, k.date].filter(Boolean).join(" · ")}
+                  </span>
+                  <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${SUMMARY_STYLE[k.summary]}`}>{k.summary}</span>
+                </span>
+                <PageLink page={k.page} row={k.row} onClick={() => onView("claim", k.page, k.row)} />
+              </div>
+              {problems.length === 0 ? (
+                <p className="mt-1 text-xs text-black/55">
+                  실비 {k.cells.length}개 항목 모두 영수증과 일치{fee ? ` · 보수 등 ${won(fee)} (대조하지 않음)` : ""}
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-1">
+                  {problems.map((c) => (
+                    <li key={c.header} className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <span className={`w-16 shrink-0 ${STATUS_STYLE[c.status]}`}>{COST_STATUS_LABELS[c.status]}</span>
+                      <span className="font-medium">{c.header}</span>
+                      <span className="tabular-nums">
+                        청구 {won(c.claimed)} / 영수증 {won(c.evidenced)}
+                      </span>
+                      {c.reasons.length > 0 && <span className="break-keep text-xs text-black/60">{c.reasons.join(" · ")}</span>}
+                      {c.receipts.map((x) => (
+                        <PageLink key={x.id} page={x.page} onClick={() => onView("receipt", x.page)} />
+                      ))}
+                    </li>
+                  ))}
+                  {k.cells.length > problems.length && <li className="text-xs text-black/55">나머지 {k.cells.length - problems.length}개 항목은 일치</li>}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

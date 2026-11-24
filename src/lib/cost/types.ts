@@ -9,7 +9,10 @@ export type CostCategory =
   | "court_fee" // 등기신청수수료 (증지)
   | "stamp_tax" // 인지세 (수입인지)
   | "certificate" // 제증명 발급비 (등기사항증명서 등)
-  | "postage" // 우편료·송달료
+  | "court_service" // 법원 송달료 (2026-11-23 경매 비용표)
+  | "deposit" // 법원 보관금 (경매 예납금)
+  | "insurance" // 보증보험료
+  | "postage" // 우편료 (민원우편 등)
   | "fee" // 법무사 보수 (기본·누진 보수, 부가세, 교통비·일당)
   | "other"; // 알아보지 못한 항목
 
@@ -33,10 +36,47 @@ export interface ClaimItem {
   row?: number;
 }
 
+/** 사건별 비용표(엑셀 한 줄 = 사건 한 건) 의 비용 칸 하나 */
+export interface CaseColumn {
+  /** 엑셀 머리줄 글자 (예: 등록세) */
+  header: string;
+  category: CostCategory;
+  /** 0부터 센 열 번호 */
+  col: number;
+}
+
+/** 사건별 비용표의 사건 한 줄 */
+export interface ClaimCase {
+  sheet: string;
+  /** 엑셀 시트 순서 (1부터) */
+  page: number;
+  /** 엑셀 화면의 행 번호 (1부터) */
+  row: number;
+  /** 번호 칸 */
+  no: string;
+  /** 사건번호의 번호 부분 (예: "21089"). 없으면 null */
+  caseNo: string | null;
+  court: string | null;
+  debtor: string | null;
+  /** 접수일자 YYYY-MM-DD */
+  date: string | null;
+  /** 비용 칸마다 청구 금액 (0원·빈 칸은 빼고) */
+  items: ClaimItem[];
+}
+
+export interface ClaimTable {
+  columns: CaseColumn[];
+  cases: ClaimCase[];
+  /** 표 아래 합계 줄 (열 번호 → 금액). 없으면 null */
+  totalRow: { row: number; values: Record<number, number> } | null;
+}
+
 export interface ClaimRead {
   items: ClaimItem[];
   /** 청구서에 적힌 합계(총 청구금액). 없으면 null */
   total: (CostAmount & { page: number }) | null;
+  /** 엑셀이 사건별 비용표이면 그 표 (사건마다 영수증과 대조한다) */
+  table?: ClaimTable;
 }
 
 /** 영수증 안의 금액 줄 하나 */
@@ -62,6 +102,8 @@ export interface Receipt {
   /** 납부일자 YYYY-MM-DD */
   date: string | null;
   items: ReceiptItem[];
+  /** 영수증에 적힌 경매 사건번호의 번호 부분 (예: 「2026타경21089」 → "21089"). 사건별 대조에서 어느 사건 영수증인지 찾는 데만 쓴다 */
+  caseNos?: string[];
   /** 영수증에 적힌 합계·납부금액 */
   total: CostAmount | null;
   /** 항목 합계와 적힌 합계가 다르거나 금액을 못 읽음 → 확인 필요 */
@@ -129,4 +171,32 @@ export interface CostResult {
   counts: Record<CostStatus, number>;
   /** 읽지 못한 페이지 등 전체 판정에 영향을 주는 안내 */
   warnings: string[];
+  /** 사건별 비용표로 대조했으면 사건마다 결과 */
+  cases?: CaseResult[];
+}
+
+/** 사건 한 건의 비용 칸 하나 대조 결과 */
+export interface CaseCell {
+  header: string;
+  category: CostCategory;
+  claimed: number | null;
+  evidenced: number | null;
+  status: CostStatus;
+  receipts: { id: string; page: number }[];
+  reasons: string[];
+}
+
+export interface CaseResult {
+  sheet: string;
+  page: number;
+  row: number;
+  no: string;
+  caseNo: string | null;
+  court: string | null;
+  debtor: string | null;
+  date: string | null;
+  summary: CostSummary;
+  cells: CaseCell[];
+  /** 법무사 보수 칸들 (대조하지 않음) */
+  fees: { header: string; amount: number }[];
 }

@@ -4,8 +4,8 @@
 // - .xls: 엑셀 97~2003 형식 (CFB 묶음 안 BIFF8 레코드). 엑셀 95 이전 형식은 받지 않는다.
 import CFB from "cfb";
 import { unzipSync, strFromU8 } from "fflate";
-import { mergeClaimPages, parseClaimLines } from "./parse";
-import type { ClaimRead, PageRead } from "./types";
+import { categoryOf, mergeClaimPages, parseClaimLines } from "./parse";
+import type { CaseColumn, ClaimCase, ClaimItem, ClaimRead, ClaimTable, PageRead } from "./types";
 
 export type Cell = string | number | null;
 export interface Sheet {
@@ -348,6 +348,8 @@ export function cellText(v: Cell): string {
  * 엑셀 칸 숫자는 글자 읽기가 아니라 정확한 값이라 「확인 필요」로 두지 않는다. 100 미만 정수(수량·번호)는 금액으로 보지 않는다.
  */
 export function parseClaimSheets(sheets: Sheet[]): { claim: ClaimRead; pages: PageRead[] } {
+  const table = readClaimTable(sheets);
+  if (table) return table;
   const reads: ClaimRead[] = [];
   const pages: PageRead[] = [];
   sheets.forEach((sheet, si) => {
@@ -371,4 +373,99 @@ export function parseClaimSheets(sheets: Sheet[]): { claim: ClaimRead; pages: Pa
     pages.push({ page, source: "text", found });
   });
   return { claim: mergeClaimPages(reads), pages };
+}
+
+// ── 사건별 비용표 (2026-11-23 실제 엑셀: 한 줄 = 경매 사건 한 건, 칸마다 비용 종류) ──────────────
+const squash = (t: string) => t.replace(/[^가-힣A-Za-z0-9]/g, "");
+const TOTAL_CELL_RE = /^(합계|총계|계|소계\d*|합|총합계|금액합계)$/;
+type IdKey = "no" | "caseNo" | "court" | "debtor" | "date";
+const ID_RULES: [IdKey, RegExp][] = [
+  ["caseNo", /^사건번호$|^사건$/],
+  ["debtor", /^채무자(명)?$|^소유자(명)?$/],
+  ["court", /^법원(명)?$|^관할법원$/],
+  ["date", /^접수일(자)?$|^신청일(자)?$|^일자$/],
+  ["no", /^번호$|^순번$|^no$/i],
+];
+
+function dateText(v: Cell): string | null {
+  if (v === null) return null;
+  const m = /((?:19|20)\d{2})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})/.exec(String(v));
+  return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null;
+}
+
+function caseNoText(v: Cell): string | null {
+  if (v === null) return null;
+  if (typeof v === "number") return Number.isInteger(v) && v > 0 ? String(v) : null;
+  const m = /타\s*경\s*(\d{1,7})/.exec(v) ?? /(\d{1,7})\s*$/.exec(v.replace(/,/g, ""));
+  return m ? String(Number(m[1])) : null;
+}
+
+/**
+ * 머리줄에 비용 종류 칸(인지대·등록세·송달료·보관금·보수 …)이 셋 이상 있는 시트를 사건별 비용표로 읽는다.
+ * 머리줄 아래 줄마다 사건 한 건, 「합계」로 시작하는 줄은 합계 줄. 소계·합계 칸은 대조하지 않는다.
+ * 사건별 비용표가 아니면 null (기존처럼 「항목 | 금액」 청구서로 읽는다).
+ */
+function readClaimTable(sheets: Sheet[]): { claim: ClaimRead; pages: PageRead[] } | null {
+  for (const [si, sheet] of sheets.entries()) {
+    for (const [hi, header] of sheet.rows.entries()) {
+      const columns: CaseColumn[] = [];
+      const ids: Partial<Record<IdKey, number>> = {};
+      header.forEach((v, col) => {
+        if (typeof v !== "string") return;
+        const key = squash(v);
+        if (!key) return;
+        const id = ID_RULES.find(([, re]) => re.test(key));
+        if (id) {
+          if (ids[id[0]] === undefined) ids[id[0]] = col;
+          return;
+        }
+        if (TOTAL_CELL_RE.test(key) || /소계|합계/.test(key)) return;
+        const category = categoryOf(v);
+        if (category !== "other") columns.push({ header: cellText(v), category, col });
+      });
+      if (columns.filter((c) => c.category !== "fee").length < 3) continue;
+
+      const cases: ClaimCase[] = [];
+      let totalRow: ClaimTable["totalRow"] = null;
+      for (let ri = hi + 1; ri < sheet.rows.length; ri++) {
+        const row = sheet.rows[ri];
+        const lead = row.find((v) => v !== null && cellText(v) !== "");
+        if (typeof lead === "string" && TOTAL_CELL_RE.test(squash(lead))) {
+          const values: Record<number, number> = {};
+          for (const c of columns) if (typeof row[c.col] === "number") values[c.col] = Math.round(row[c.col] as number);
+          totalRow = { row: ri + 1, values };
+          break;
+        }
+        const items: ClaimItem[] = [];
+        for (const c of columns) {
+          const v = row[c.col];
+          const n = typeof v === "number" ? v : typeof v === "string" && /^[\d,\s]+원?$/.test(v.trim()) ? Number(v.replace(/[^\d]/g, "")) : null;
+          if (n === null || n === 0) continue;
+          const exact = Number.isInteger(n) && n > 0;
+          items.push({ label: c.header, category: c.category, amount: { value: exact ? n : Math.round(n), uncertain: !exact }, page: si + 1, sheet: sheet.name, row: ri + 1 });
+        }
+        // 비용이 하나도 없는 줄(빈 줄·설명 줄)은 사건이 아니다
+        if (!items.length) continue;
+        const at = (k: IdKey) => (ids[k] === undefined ? null : row[ids[k]!]);
+        const text = (v: Cell) => (v === null || cellText(v) === "" ? null : cellText(v));
+        cases.push({
+          sheet: sheet.name,
+          page: si + 1,
+          row: ri + 1,
+          no: text(at("no")) ?? String(cases.length + 1),
+          caseNo: caseNoText(at("caseNo")),
+          court: text(at("court")),
+          debtor: text(at("debtor")),
+          date: dateText(at("date")),
+          items,
+        });
+      }
+      if (!cases.length) continue;
+      const items = cases.flatMap((c) => c.items);
+      const sum = items.reduce((s, i) => s + (i.amount.value ?? 0), 0);
+      const pages: PageRead[] = sheets.map((_, i) => ({ page: i + 1, source: "text" as const, found: i === si ? items.length : 0 }));
+      return { claim: { items, total: { value: sum, uncertain: false, page: si + 1 }, table: { columns, cases, totalRow } }, pages: pages.filter((p) => p.page === si + 1) };
+    }
+  }
+  return null;
 }
